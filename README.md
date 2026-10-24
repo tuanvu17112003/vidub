@@ -123,9 +123,13 @@ crash-resumable and run per stage.
   download. Needs `pip install -e ".[youtube]"`.
 - **Local web UI (opt-in)** — `vidub ui` opens a Gradio page to upload/paste a
   video or URL, watch per-stage progress, inspect the script/segment audio, and
-  download the dub. An **Engines & quality (M4/M5)** accordion exposes the MT
+  download the dub. The form is generated from the same option registry as the
+  CLI (`vidub.options`), so both surfaces expose the same run options. An
+  **Engines & quality (M4/M5)** accordion exposes the MT
   engine + model/host, the refine pass and Chimera fusion, the sentence-level
-  units switch, restore-punct and the five QC toggles; one-click **test presets**
+  units switch, restore-punct and the five QC toggles; a **Timing & budgeting**
+  accordion exposes the stretch/re-translation levers and the opt-in ISO-1
+  isometric budget; one-click **test presets**
   configure the M5 features; a
   **Re-run these stages (force)** control re-processes a cached video; and a
   **Quality results** panel shows the QC verdicts/counters. A run that needs

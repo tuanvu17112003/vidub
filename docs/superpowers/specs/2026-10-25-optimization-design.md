@@ -1,7 +1,7 @@
 # ViDub repo cleanup + config/UI sync + core-file split — design
 
 Date: 2026-10-25
-Status: draft for user approval
+Status: approved (2026-10-25) and implemented; see docs/superpowers/plans/2026-10-25-optimization.md
 Chosen approach: **B** (user picked "A + split large core files" from the
 2026-10-25 analysis conversation).
 
