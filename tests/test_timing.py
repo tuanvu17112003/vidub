@@ -803,13 +803,15 @@ def test_smart_trim_cuts_at_silence(tmp_path: Path) -> None:
 
 def test_smart_trim_applies_fade(monkeypatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
-    real = timing_mod.run_ffmpeg
+    from vidub.stages.timing import synth as timing_synth
+
+    real = timing_synth.run_ffmpeg
 
     def spy(args: list[str]):
         calls.append(list(args))
         return real(args)
 
-    monkeypatch.setattr(timing_mod, "run_ffmpeg", spy)
+    monkeypatch.setattr(timing_synth, "run_ffmpeg", spy)
 
     artifacts_dir = tmp_path / "art"
     artifacts_dir.mkdir(parents=True)
@@ -1215,7 +1217,9 @@ def test_tts_qc_piper_retry_uses_alternate_voice(tmp_path, monkeypatch) -> None:
         seen_configs.append(voice_path)
         return Path("alt.onnx"), Path("alt.onnx.json")
 
-    monkeypatch.setattr(timing_mod, "_piper_voice_files", _fake_files)
+    from vidub.stages.timing import clipqc as timing_clipqc
+
+    monkeypatch.setattr(timing_clipqc, "_piper_voice_files", _fake_files)
     monkeypatch.setattr(
         timing_mod.ttsqc,
         "score_wav",
@@ -1980,7 +1984,9 @@ def test_units_json_text_drives_synthesis_verbatim(monkeypatch, tmp_path: Path) 
             "group_units must not run when units.json is authoritative"
         )
 
-    monkeypatch.setattr(timing_mod, "group_units", _boom)
+    from vidub.stages.timing import units as timing_units
+
+    monkeypatch.setattr(timing_units, "group_units", _boom)
     tts = FakeTTS(default=1.0)
 
     fit(str(job_path), cfg, tts=tts, translator=FakeTranslator(), asr=FakeASR(None))
@@ -2084,7 +2090,9 @@ def test_no_align_display_never_builds_or_calls_asr(
     def _boom(model, device="auto"):  # pragma: no cover - only on a regression
         raise AssertionError("build_asr must not run with --no-align-display")
 
-    monkeypatch.setattr(timing_mod, "build_asr", _boom)
+    from vidub.stages.timing import run as timing_run
+
+    monkeypatch.setattr(timing_run, "build_asr", _boom)
 
     fit(str(job_path), cfg, tts=FakeTTS(default=1.0), translator=FakeTranslator(), asr=asr)
 
