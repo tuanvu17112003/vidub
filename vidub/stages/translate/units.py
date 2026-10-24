@@ -1,86 +1,18 @@
-"""S2 Translate: source segments -> Vietnamese dubbing script (``script.json``).
-
-Reads ``job.json`` + ``segments.json``, translates every segment with the
-configured MT engine (envit5 by default, or the contextual Ollama LLM engine /
-the opt-in Hunyuan HY-MT1.5 specialist) and writes ``script.json`` — a list of
-``{start, end, speaker, en, vi, truncated}`` records — records it under
-``manifest.paths`` and marks the ``translate`` stage done.
-
-The main batch goes through ``engine.translate_contextual`` so a context-aware
-engine (Ollama, M4-T5) can see neighbouring segments; engines without context
-(BaseTranslator's default) delegate to ``translate``, keeping envit5 identical.
-
-When ``cfg.glossary_path`` is set, the glossary is loaded once and applied to
-each MT output (never to passthrough segments) *before* the length/low-confidence
-checks, so enforced terminology is what gets truncated/flagged. Two mechanisms
-run: the output-side replace (a term present in the MT output) and the
-source-side splice (a glossed term present only in the source is reinforced by
-re-translating the surrounding chunks and joining the enforced phrase). The
-counts (``terms`` / ``replacements`` / ``spliced`` / ``enforced`` /
-``hesitations`` / ``style_fixes``) are written to a small ``glossary.json``
-sidecar that the export stage reads for the report.
-
-Every row (translated, spliced and passthrough) is passed through
-:func:`vidub.utils.textclean.clean_hesitation` before the length check, so
-stutters/repetitions never reach the TTS. MT/spliced rows then get the
-deterministic Vietnamese word-order pass
-(:func:`vidub.utils.vnstyle.apply_vnstyle`) before the length guard; passthrough
-rows are user-language and are left untouched.
-
-Length guard (dubbing rhythm): if a translation's word count exceeds 2.2x the
-source word count it is truncated at the last sentence end at/before the limit
-and flagged ``"truncated": true``.
-
-Sentence-level translation units (TU-1 / SA-1-T2, default on) make the
-**sentence** the ``script.json`` row unit and the **unit** the translation + QC
-unit. The ASR rows are immediately split at internal sentence boundaries
-(:func:`vidub.utils.sentences.split_into_sentences`) with each sentence's
-``start``/``end`` locked to the ASR word edges, and
-:func:`vidub.utils.sentences.group_units` merges a fragment run with the
-complete sentence it finishes into one unit; a unit closes only at a completed
-sentence or a speaker change. Each unit's source is translated as one
-``translate_contextual`` batch item and the result is checked by the new
-completeness guard (:mod:`vidub.utils.units_guard`): a short/dropped unit is
-resampled or handed to a fallback engine, and a unit that reproduced a
-neighbour's content (``context-bleed`` / ``sentence-addition``) is retried with
-the direct (non-contextual) template, before the deterministic passes
-(glossary, hesitation cleanup, vnstyle, length guard) run **on the unit text**;
-only then is the final unit text distributed back onto its member sentence rows
-with :func:`vidub.utils.sentences.split_translation`. Passthrough (already
-target-language) rows are never merged and never translated. The one-per-unit
-guard+battery records and the unit counts are written to
-``translation_qc.json`` under ``units`` (``detail`` + ``flags``) and the unit
-map to ``units.json``. ``--no-sentence-units`` (``cfg.sentence_units = False``)
-skips the whole unit path and is byte-identical to the previous per-segment
-behavior (no ``units.json``, one ``script.json`` row per ASR segment).
-
-Standalone use::
-
-    python -m vidub.stages.translate <cache>/<hash>/job.json
-"""
+"""Sentence-level translation units (TU-1 / SA-1-T2): the unit path."""
 
 from __future__ import annotations
 
-import argparse
 import inspect
-import json
 import logging
-import sys
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from vidub.config import (
-    DEFAULT_HUNYUAN_HOST,
-    DEFAULT_HUNYUAN_MODEL,
-    JobConfig,
-)
+from vidub.config import JobConfig
 from vidub.engines.mt.base import BaseTranslator, TranslationError
-from vidub.engines.mt.envit5_mt import Envit5Translator
 from vidub.engines.mt.hunyuan_mt import _lang_full
 from vidub.engines.mt.validators import _validate
 from vidub.manifest import JobManifest
-from vidub.utils.glossary import apply_glossary, load_glossary, splice_source_terms
+from vidub.utils.glossary import apply_glossary, splice_source_terms
 from vidub.utils.isometry import (
     accept_shrunk,
     char_count,
@@ -89,18 +21,15 @@ from vidub.utils.isometry import (
     projected_stretch,
     unit_budget,
 )
-from vidub.utils.langcheck import VN_CHARS, vn_diacritic_ratio
 from vidub.utils.sentences import (
     Unit,
     ends_sentence,
     group_units,
-    split_into_sentences,
     split_translation,
     unit_cut_stats,
     unit_share_summary,
 )
 from vidub.utils.textclean import clean_hesitation
-from vidub.utils.tqc import run_battery
 from vidub.utils.units_guard import (
     UNIT_COVERAGE_MIN,
     contamination_signals,
@@ -109,159 +38,16 @@ from vidub.utils.units_guard import (
 )
 from vidub.utils.vnstyle import apply_vnstyle
 
-__all__ = ["translate", "build_translator", "truncate_translation", "main"]
+from vidub.stages.translate.constants import (
+    LOW_CONFIDENCE_MIN_WORDS,
+)
+from vidub.stages.translate.engines import (
+    _is_low_confidence,
+    truncate_translation,
+)
+from vidub.stages.translate.qc import _run_qc_battery, _script_row
 
 log = logging.getLogger(__name__)
-
-SEGMENTS_NAME = "segments.json"
-SCRIPT_NAME = "script.json"
-# Glossary counters sidecar for report.json ("glossary": {...}); script.json rows
-# stay unchanged, so the loaded/applied counts are persisted here instead.
-GLOSSARY_NAME = "glossary.json"
-# Level-2 translation QC artifact (QUALITY-ROADMAP.md §3.3, M4-T3).
-TRANSLATION_QC_NAME = "translation_qc.json"
-# SA-1-T2 unit map sidecar: one record per sentence-level unit with the unit's
-# authoritative locked span and its member row indices (only on the unit path).
-UNITS_NAME = "units.json"
-LENGTH_RATIO = 2.2
-# A source segment this Vietnamese-looking is already Vietnamese: asking envit5
-# to translate it just echoes the input (and can corrupt it), so copy it through.
-PASSTHROUGH_RATIO = 0.5
-# Below this many source words an output without diacritics is not meaningful.
-LOW_CONFIDENCE_MIN_WORDS = 3
-_SENTENCE_END = (".", "!", "?")
-
-
-def build_translator(
-    manifest: JobManifest, cfg: JobConfig | None = None
-) -> BaseTranslator:
-    """Instantiate the MT engine named by ``manifest.mt_engine``.
-
-    ``manifest.mt_engine`` (written by ingest from ``cfg.mt_engine``) selects the
-    engine; ``cfg`` optionally supplies engine-specific settings, currently the
-    Ollama and Hunyuan model/host. It stays optional so callers that only need
-    the default envit5 engine (the timing stage's shortening retry) keep working.
-    """
-    engine = (
-        (manifest.mt_engine or "").strip().lower()
-        or ((cfg.mt_engine if cfg else "") or "envit5").strip().lower()
-    )
-    if engine in {"envit5", "envit5-translation", "vietai/envit5-translation"}:
-        return Envit5Translator()
-    if engine == "ollama":
-        from vidub.engines.mt.ollama_mt import OllamaTranslator
-
-        return OllamaTranslator(
-            model=(cfg.ollama_model if cfg else "") or "qwen2.5:7b",
-            host=(cfg.ollama_host if cfg else "") or "http://127.0.0.1:11434",
-        )
-    if engine == "hunyuan":
-        from vidub.engines.mt.hunyuan_mt import HunyuanMTTranslator
-
-        return HunyuanMTTranslator(
-            model=(cfg.hunyuan_model if cfg else "") or DEFAULT_HUNYUAN_MODEL,
-            host=(cfg.hunyuan_host if cfg else "") or DEFAULT_HUNYUAN_HOST,
-        )
-    raise TranslationError(f"unknown mt_engine: {manifest.mt_engine!r}")
-
-
-def truncate_translation(text: str, src_words: int) -> tuple[str, bool]:
-    """Enforce the 2.2x length rule.
-
-    Returns ``(text, truncated)``: when ``text`` exceeds ``2.2 * src_words``
-    words it is cut at the last ``. ! ?`` at/before the limit (falling back to
-    the limit itself if there is no sentence end) and flagged.
-    """
-    if src_words <= 0:
-        return text, False
-
-    limit = int(LENGTH_RATIO * src_words)
-    words = text.split()
-    if len(words) <= limit:
-        return text, False
-
-    cut = None
-    for index, word in enumerate(words[:limit]):
-        if word and word[-1] in _SENTENCE_END:
-            cut = index + 1
-    if cut is None:
-        cut = limit
-    return " ".join(words[:cut]), True
-
-
-def _is_low_confidence(source: str, translated: str, tgt_lang: str) -> bool:
-    """Flag a translation that is empty or (for vi) shockingly diacritic-free.
-
-    An empty output is always suspicious. For ``tgt_lang == "vi"``, an output
-    with no Vietnamese diacritics at all while the source had at least
-    :data:`LOW_CONFIDENCE_MIN_WORDS` words usually means the MT engine echoed or
-    dropped the input.
-    """
-    if not translated:
-        return True
-    if (tgt_lang or "").strip().lower() == "vi":
-        if len(source.split()) >= LOW_CONFIDENCE_MIN_WORDS and not any(
-            char in VN_CHARS for char in translated
-        ):
-            return True
-    return False
-
-
-def _build_refiner(
-    cfg: JobConfig, glossary: dict[str, str], manifest: JobManifest
-) -> Callable[[list[dict], list[dict]], tuple[list[dict], list[dict], dict]]:
-    """Build the M5-T2 refine callback; may raise on a construction failure.
-
-    The Hunyuan generator is built directly from config (independent of the main
-    engine, so refine works with any ``--mt-engine``). The Chimera fusion model
-    is used only when ``cfg.fusion_model`` is set; the envit5 candidate engine is
-    optional (a missing/heavy dependency disables just that candidate).
-    """
-    from vidub.engines.mt.hunyuan_mt import HunyuanMTTranslator
-    from vidub.utils.refine import make_refiner
-
-    generator = HunyuanMTTranslator(
-        model=cfg.hunyuan_model or DEFAULT_HUNYUAN_MODEL,
-        host=cfg.hunyuan_host or DEFAULT_HUNYUAN_HOST,
-    )
-    fusion = None
-    if cfg.fusion_model:
-        fusion = HunyuanMTTranslator(
-            model=cfg.fusion_model,
-            host=cfg.hunyuan_host or DEFAULT_HUNYUAN_HOST,
-        )
-    envit5 = None
-    try:
-        from vidub.engines.mt.envit5_mt import Envit5Translator
-
-        envit5 = Envit5Translator()
-    except Exception as exc:  # noqa: BLE001 - optional/heavy dependency
-        log.warning("refine: envit5 candidate unavailable (%s)", exc)
-        envit5 = None
-    return make_refiner(
-        generator,
-        fusion=fusion,
-        envit5=envit5,
-        samples=cfg.hunyuan_samples,
-        src_lang=manifest.src_lang,
-        tgt_lang=manifest.tgt_lang,
-        glossary=glossary,
-        max_units=cfg.hunyuan_refine_max_units,
-    )
-
-
-def _refine_engine(manifest: JobManifest, cfg: JobConfig) -> str:
-    """The MT engine name the refine gate should key on.
-
-    Mirrors :func:`build_translator`'s resolution (manifest first, then config,
-    then ``envit5``) so a hunyuan job is recognised whether the engine name comes
-    from the manifest (normal runs) or the config (tests / programmatic use).
-    """
-    return (
-        (manifest.mt_engine or "").strip().lower()
-        or (cfg.mt_engine or "").strip().lower()
-        or "envit5"
-    )
 
 
 @dataclass
@@ -481,189 +267,6 @@ def _rejection_reason(
     return ""
 
 
-def _script_row(
-    seg: dict,
-    vi: str,
-    truncated: bool,
-    *,
-    passthrough: bool = False,
-    spliced: bool = False,
-    low_confidence: bool = False,
-) -> dict[str, object]:
-    """Build one ``script.json`` row, adding the optional flags when set."""
-    record: dict[str, object] = {
-        "start": float(seg.get("start", 0.0)),
-        "end": float(seg.get("end", 0.0)),
-        "speaker": seg.get("speaker", "spk0"),
-        "en": str(seg.get("text", "")),
-        "vi": vi,
-        "spoken_vi": vi,
-        "subtitle_vi": vi,
-        "truncated": truncated,
-    }
-    if passthrough:
-        record["passthrough"] = True
-    if spliced:
-        record["glossary_spliced"] = True
-    if low_confidence:
-        record["low_confidence"] = True
-    return record
-
-
-def _run_qc_battery(
-    rows: list[dict],
-    glossary: dict[str, str],
-    engine: BaseTranslator,
-    manifest: JobManifest,
-    cfg: JobConfig,
-    artifacts_dir: Path,
-) -> tuple[list[dict], dict | None]:
-    """Run the level-2 battery with the M5-T2 refine/pristine-snapshot structure.
-
-    Returns ``(rows, artifact)`` where ``artifact`` is ``None`` when the battery
-    is disabled, so the caller writes no ``translation_qc.json`` (today's
-    behaviour). ``rows`` are the scored rows — the per-segment rows on the off
-    path, one row per unit on the sentence-unit path.
-    """
-    if not cfg.qc_translation:
-        return rows, None
-    # M5-T2 refine pass. Default-on for the hunyuan engine (cfg.hunyuan_refine is
-    # None = auto); explicit True forces it on, explicit False
-    # (--no-hunyuan-refine) restores the previous behaviour. The pass is only
-    # ever built for the hunyuan engine, so envit5/ollama runs are byte-identical
-    # to before. Construction and the battery call are both guarded so refine can
-    # never fail a run (any error -> the refiner is dropped).
-    refiner = None
-    if cfg.hunyuan_refine is not False and _refine_engine(manifest, cfg) == "hunyuan":
-        try:
-            refiner = _build_refiner(cfg, glossary, manifest)
-        except Exception as exc:  # noqa: BLE001 - refine must never fail a run
-            log.warning("refine disabled: could not build refiner (%s)", exc)
-            refiner = None
-    if refiner is not None:
-        # Pristine pre-battery snapshot (shallow per-row copies): if the
-        # refiner raises, recompute the deterministic corrections from
-        # scratch instead of re-applying them to already-mutated rows.
-        battery_rows = [dict(row) for row in rows]
-        try:
-            rows, qc_artifact = run_battery(
-                rows,
-                glossary,
-                engine,
-                manifest.src_lang,
-                manifest.tgt_lang,
-                out_dir=artifacts_dir,
-                refiner=refiner,
-            )
-        except Exception as exc:  # noqa: BLE001 - refine must never fail a run
-            log.warning("refine pass failed (%s); rerunning without refine", exc)
-            rows, qc_artifact = run_battery(
-                battery_rows,
-                glossary,
-                engine,
-                manifest.src_lang,
-                manifest.tgt_lang,
-                out_dir=artifacts_dir,
-            )
-    else:
-        # No refiner: unchanged path, so a battery error still propagates.
-        rows, qc_artifact = run_battery(
-            rows,
-            glossary,
-            engine,
-            manifest.src_lang,
-            manifest.tgt_lang,
-            out_dir=artifacts_dir,
-        )
-    return rows, qc_artifact
-
-
-def _build_per_segment_script(
-    engine: BaseTranslator,
-    rows: list[dict],
-    src_texts: list[str],
-    passthrough_idx: set[int],
-    translations: list[str],
-    glossary: dict[str, str],
-    manifest: JobManifest,
-) -> tuple[list[dict], dict[str, int]]:
-    """The per-segment (``--no-sentence-units``) loop: today's exact behaviour.
-
-    Returns ``(script, counters)``; ``counters`` holds the glossary / hesitation
-    / style counts the glossary sidecar records.
-    """
-    counters = {
-        "replacements": 0,
-        "spliced": 0,
-        "enforced": 0,
-        "hesitations": 0,
-        "style_fixes": 0,
-    }
-    translated_iter = iter(translations)
-    script: list[dict[str, object]] = []
-    low_confidence_idx: list[int] = []
-
-    def _translate_one(chunk: str) -> str:
-        """Translate one short source chunk for the source-side glossary splice."""
-        result = engine.translate([chunk], manifest.src_lang, manifest.tgt_lang)
-        return str(result[0]) if result else ""
-
-    for index, seg in enumerate(rows):
-        source = src_texts[index]
-        rebuilt = False
-        if index in passthrough_idx:
-            # Already user-language: the glossary must not touch passthrough rows.
-            vi_text = source
-        else:
-            vi_text = next(translated_iter)
-            if glossary:
-                # Enforce terminology on the MT output *before* the length and
-                # low-confidence checks so those act on the final text.
-                vi_text, applied = apply_glossary(vi_text, glossary)
-                counters["replacements"] += applied
-                # Source-side enforcement: only re-translates when the model did
-                # not already emit the enforced phrase.
-                if source:
-                    vi_text, rebuilt, enforced = splice_source_terms(
-                        source, vi_text, glossary, _translate_one, max_terms=2
-                    )
-                    counters["enforced"] += enforced
-                    if rebuilt:
-                        counters["spliced"] += 1
-        # Hesitation/repetition cleanup runs on every row (MT output, spliced
-        # output and passthrough) before the length guard.
-        cleaned, fixed = clean_hesitation(vi_text or "")
-        counters["hesitations"] += fixed
-        # Vietnamese word-order refinement runs on MT/spliced rows only, after
-        # the hesitation cleanup and before the length guard. Passthrough rows
-        # are user-language and must not be reordered.
-        if index not in passthrough_idx:
-            cleaned, style_fixed = apply_vnstyle(cleaned)
-            counters["style_fixes"] += style_fixed
-        cleaned, truncated = truncate_translation(cleaned.strip(), len(source.split()))
-        low = _is_low_confidence(source, cleaned, manifest.tgt_lang)
-        if low:
-            low_confidence_idx.append(index)
-        script.append(
-            _script_row(
-                seg,
-                cleaned,
-                truncated,
-                passthrough=index in passthrough_idx,
-                spliced=rebuilt,
-                low_confidence=low,
-            )
-        )
-
-    if low_confidence_idx:
-        log.warning(
-            "low-confidence translation for segment(s) %s: empty output or no "
-            "Vietnamese diacritics on a >= %d-word source",
-            low_confidence_idx,
-            LOW_CONFIDENCE_MIN_WORDS,
-        )
-    return script, counters
-
 
 def _unit_rows(
     rows: list[dict], src_texts: list[str], passthrough_idx: set[int]
@@ -719,6 +322,7 @@ def _passthrough_guard_record(source: str) -> dict:
         "overlap_prev_after": 0.0,
         "overlap_next_after": 0.0,
     }
+
 
 
 def _translate_sentence_units(
@@ -1261,234 +865,3 @@ def _translate_sentence_units(
         units_doc=units_doc,
     )
 
-
-def translate(
-    manifest_path: str,
-    cfg: JobConfig,
-    translator: BaseTranslator | None = None,
-) -> JobManifest:
-    """Translate the job's segments and write ``script.json``.
-
-    ``translator`` may be supplied to override the engine (used by tests);
-    otherwise the engine named in the manifest is used. Segments whose source
-    text is already Vietnamese (diacritic ratio >= :data:`PASSTHROUGH_RATIO`)
-    skip the MT call and are copied through, flagged ``"passthrough": true``.
-    """
-    manifest = JobManifest.load(manifest_path)
-    artifacts_dir = manifest.artifacts_dir
-
-    segments_rel = manifest.paths.get("segments", SEGMENTS_NAME)
-    segments_path = artifacts_dir / segments_rel
-    if not segments_path.exists():
-        raise FileNotFoundError(
-            f"segments not found: {segments_path}. "
-            "Run the transcribe stage first, e.g. "
-            f"'python -m vidub.stages.transcribe {manifest_path}'."
-        )
-
-    raw_segments = json.loads(segments_path.read_text(encoding="utf-8"))
-    # SA-1-T2: on the sentence-unit path the ROW unit is a *sentence*. The ASR
-    # rows (manifest.segments / segments.json) stay untouched; only the working
-    # row list downstream is split at internal sentence boundaries, with each
-    # sentence's start/end locked to the ASR word edges. Off path: unchanged.
-    rows = split_into_sentences(raw_segments) if cfg.sentence_units else raw_segments
-    src_texts = [str(seg.get("text", "")) for seg in rows]
-
-    tgt_lang = (manifest.tgt_lang or "").strip().lower()
-    passthrough_idx = {
-        index
-        for index, text in enumerate(src_texts)
-        if tgt_lang == "vi" and vn_diacritic_ratio(text) >= PASSTHROUGH_RATIO
-    }
-    if passthrough_idx:
-        log.warning(
-            "translation passthrough for already-Vietnamese segment(s) %s "
-            "(the ASR language guard should normally have caught this)",
-            sorted(passthrough_idx),
-        )
-
-    glossary: dict[str, str] = {}
-    if cfg.glossary_path:
-        glossary = load_glossary(cfg.glossary_path)
-        log.info(
-            "loaded glossary %s (%d term(s))", cfg.glossary_path, len(glossary)
-        )
-
-    engine = translator if translator is not None else build_translator(manifest, cfg)
-    # Feed the loaded glossary to context-aware LLM engines so their terminology
-    # template sees the enforced pairs (M5-T2); the deterministic enforcement
-    # below is unchanged. Fixes the dormant-glossary debt for ollama + hunyuan.
-    if glossary and hasattr(engine, "glossary"):
-        engine.glossary = glossary
-
-    unit_block: dict | None = None
-    units_doc: dict | None = None
-    if cfg.sentence_units:
-        # TU-1 / SA-1-T2: the sentence is the row unit, the unit is the
-        # translation + QC unit. The helper translates each unit, guards its
-        # completeness, runs the deterministic passes on the unit text, scores
-        # the units with the battery and hands back the sentence rows.
-        result = _translate_sentence_units(
-            engine,
-            rows,
-            src_texts,
-            passthrough_idx,
-            manifest,
-            cfg,
-            glossary,
-            artifacts_dir,
-        )
-        script = result.script
-        counters = result.counters
-        qc_artifact = result.qc_artifact
-        unit_block = result.unit_block
-        units_doc = result.units_doc
-    else:
-        # --no-sentence-units: the previous per-segment behaviour, unchanged.
-        to_translate = [
-            text
-            for index, text in enumerate(src_texts)
-            if index not in passthrough_idx
-        ]
-        translations = (
-            engine.translate_contextual(
-                to_translate, manifest.src_lang, manifest.tgt_lang
-            )
-            if to_translate
-            else []
-        )
-        if len(translations) != len(to_translate):
-            raise TranslationError(
-                f"translator returned {len(translations)} result(s) for "
-                f"{len(to_translate)} input(s)"
-            )
-        script, counters = _build_per_segment_script(
-            engine, rows, src_texts, passthrough_idx, translations, glossary, manifest
-        )
-        # Level-2 translation QC battery (QUALITY-ROADMAP.md §3.3): score the
-        # fully built rows, correct what is safely correctable (glossary splice /
-        # one re-translation) and record a translation verdict. Runs after every
-        # existing pass and before script.json is written, so corrected text is
-        # what downstream stages read.
-        script, qc_artifact = _run_qc_battery(
-            script, glossary, engine, manifest, cfg, artifacts_dir
-        )
-
-    # QC corrections are part of the accepted translation too; initialize both
-    # selections from the final script text only after the battery has finished.
-    for row in script:
-        row["spoken_vi"] = str(row.get("vi", ""))
-        row["subtitle_vi"] = str(row.get("vi", ""))
-
-    if glossary:
-        log.info(
-            "glossary: %d term(s) applied (%d replacement(s), %d source-side "
-            "enforcement(s), %d spliced)",
-            len(glossary),
-            counters["replacements"],
-            counters["enforced"],
-            counters["spliced"],
-        )
-    if counters["hesitations"]:
-        log.info(
-            "cleaned %d hesitation artifact(s) from the translated text",
-            counters["hesitations"],
-        )
-    if counters["style_fixes"]:
-        log.info(
-            "refined Vietnamese word order in %d place(s)", counters["style_fixes"]
-        )
-
-    # Always write the sidecar (zeros when no glossary) so a later glossary-free
-    # re-run cannot inherit stale counts from a previous run.
-    (artifacts_dir / GLOSSARY_NAME).write_text(
-        json.dumps(
-            {
-                "terms": len(glossary),
-                "replacements": counters["replacements"],
-                "spliced": counters["spliced"],
-                "enforced": counters["enforced"],
-                "hesitations": counters["hesitations"],
-                "style_fixes": counters["style_fixes"],
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
-    if qc_artifact is not None:
-        if unit_block is not None:
-            # SA-1-T2 unit statistics + the per-unit guard/battery records and
-            # flag counts. Only added when the sentence-unit path ran, so
-            # --no-sentence-units keeps today's artifact byte-identical.
-            qc_artifact["units"] = unit_block
-        (artifacts_dir / TRANSLATION_QC_NAME).write_text(
-            json.dumps(qc_artifact, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        manifest.paths["translation_qc"] = TRANSLATION_QC_NAME
-        manifest.translation_verdict = str(qc_artifact.get("verdict", ""))
-        refine_info = qc_artifact.get("refine")
-        if refine_info:
-            log.info(
-                "translation QC: verdict=%s counts=%s (roundtrip=%s, refine=%s)",
-                qc_artifact["verdict"],
-                qc_artifact["counts"],
-                qc_artifact["roundtrip"],
-                refine_info,
-            )
-        else:
-            log.info(
-                "translation QC: verdict=%s counts=%s (roundtrip=%s)",
-                qc_artifact["verdict"],
-                qc_artifact["counts"],
-                qc_artifact["roundtrip"],
-            )
-
-    (artifacts_dir / SCRIPT_NAME).write_text(
-        json.dumps(script, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    if units_doc is not None:
-        # SA-1-T2 unit map: the authoritative unit text + locked span + members.
-        (artifacts_dir / UNITS_NAME).write_text(
-            json.dumps(units_doc, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        manifest.paths["units"] = UNITS_NAME
-
-    manifest.paths["script"] = SCRIPT_NAME
-    manifest.paths["glossary"] = GLOSSARY_NAME
-    manifest.text_contract_version = 1
-    manifest.stages["translate"] = "done"
-    manifest.save(artifacts_dir / "job.json")
-    return manifest
-
-
-def main(argv: list[str] | None = None) -> int:
-    """CLI entry point: ``python -m vidub.stages.translate <job.json>``."""
-    parser = argparse.ArgumentParser(
-        prog="vidub.stages.translate",
-        description="S2 translate: segments.json -> script.json (Vietnamese).",
-    )
-    parser.add_argument("job", help="path to the job.json manifest")
-    parser.add_argument(
-        "--cache-dir", default=None, help="cache root (default: manifest's)"
-    )
-    args = parser.parse_args(argv)
-
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-
-    cfg = JobConfig()
-    if args.cache_dir:
-        cfg.cache_dir = args.cache_dir
-
-    try:
-        manifest = translate(args.job, cfg)
-    except (FileNotFoundError, TranslationError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(str(manifest.artifacts_dir / SCRIPT_NAME))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

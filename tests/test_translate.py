@@ -966,10 +966,11 @@ def test_sentence_units_passthrough_boundary_is_a_speaker_cut(
     job_path, _artifacts_dir, cfg = _make_job(tmp_path, segments, sentence_units=True)
     assert cfg.qc_translation is True  # the unit report is written on this path
 
-    from vidub.stages import translate as translate_module
 
     captured: dict = {}
-    real_cut_stats = translate_module.unit_cut_stats
+    from vidub.stages.translate import units as translate_units
+
+    real_cut_stats = translate_units.unit_cut_stats
 
     def _spy(units, rows):
         stats = real_cut_stats(units, rows)
@@ -977,7 +978,7 @@ def test_sentence_units_passthrough_boundary_is_a_speaker_cut(
         captured["stats"] = stats
         return stats
 
-    monkeypatch.setattr(translate_module, "unit_cut_stats", _spy)
+    monkeypatch.setattr(translate_units, "unit_cut_stats", _spy)
 
     with caplog.at_level(logging.INFO, logger="vidub.stages.translate"):
         translate(str(job_path), cfg, translator=RecordingTranslator())
@@ -1554,7 +1555,6 @@ def test_refine_is_default_on_for_hunyuan_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Auto default: refine is built for hunyuan and never for envit5."""
-    import vidub.stages.translate as translate_mod
 
     built: list[str] = []
 
@@ -1566,7 +1566,9 @@ def test_refine_is_default_on_for_hunyuan_only(
             {"attempted": 0, "improved": 0, "fusion_used": False, "outcomes": []},
         )
 
-    monkeypatch.setattr(translate_mod, "_build_refiner", fake_build)
+    from vidub.stages.translate import qc as translate_qc
+
+    monkeypatch.setattr(translate_qc, "_build_refiner", fake_build)
 
     # envit5 (the default engine): the refiner is never built
     job_path, _art, cfg = _make_job(tmp_path / "envit5", SEGMENTS, sentence_units=True)
@@ -1593,7 +1595,6 @@ def test_refine_records_counts_budget_and_detail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The hunyuan refine pass records counts/budget and each unit's action."""
-    import vidub.stages.translate as translate_mod
 
     def fake_build(cfg, glossary, manifest):
         assert cfg.hunyuan_refine_max_units == 40
@@ -1628,7 +1629,9 @@ def test_refine_records_counts_budget_and_detail(
 
         return refiner
 
-    monkeypatch.setattr(translate_mod, "_build_refiner", fake_build)
+    from vidub.stages.translate import qc as translate_qc
+
+    monkeypatch.setattr(translate_qc, "_build_refiner", fake_build)
 
     job_path, artifacts_dir, cfg = _make_job(tmp_path, SEGMENTS, sentence_units=True)
     _set_mt_engine(job_path, "hunyuan")
