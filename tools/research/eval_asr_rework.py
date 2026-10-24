@@ -277,7 +277,7 @@ def _load_qwen3(model_name: str, revision: str | None):
 
 
 def _run_qwen3_in_isolated_venv(argv: list[str]) -> int:
-    python = Path(__file__).resolve().parents[1] / ".eval-venv-qwen3" / "Scripts" / "python.exe"
+    python = Path(__file__).resolve().parents[2] / ".eval-venv-qwen3" / "Scripts" / "python.exe"
     if not python.is_file():
         raise RuntimeError(
             f"isolated Qwen environment not found: {python}; create it and install qwen-asr"
@@ -309,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         _verify_audio_hashes(cases)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         if args.engine == "qwen3" and Path(sys.executable).resolve() != (
-            Path(__file__).resolve().parents[1] / ".eval-venv-qwen3" / "Scripts" / "python.exe"
+            Path(__file__).resolve().parents[2] / ".eval-venv-qwen3" / "Scripts" / "python.exe"
         ).resolve():
             return _run_qwen3_in_isolated_venv(raw_argv)
 

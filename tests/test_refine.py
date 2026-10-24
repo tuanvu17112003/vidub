@@ -363,16 +363,24 @@ def test_refiner_exception_reruns_battery_on_pristine_snapshot(
     cfg = JobConfig(cache_dir=str(tmp_path / "cache"), hunyuan_refine=True)
 
     def mutate_then_raise(rows, entries):  # noqa: ANN001 - test double
+        calls["n"] += 1
         rows[0]["vi"] = "SENTINEL-XYZ"
         raise RuntimeError("refine exploded")
 
+    calls = {"n": 0}
+    from vidub.stages.translate import qc as translate_qc
+
     monkeypatch.setattr(
-        translate_mod,
+        translate_qc,
         "_build_refiner",
         lambda cfg, glossary, manifest: mutate_then_raise,
     )
 
     translate_mod.translate(str(job_path), cfg, translator=_FakeTranslator())
+
+    # Non-vacuity guard: the fake refiner must have actually run (a patch on
+    # the wrong module would leave it at 0 and the assertions below trivial).
+    assert calls["n"] == 1
 
     script = json.loads((artifacts_dir / "script.json").read_text(encoding="utf-8"))
     # The partial refine mutation was discarded: the fallback re-ran the battery

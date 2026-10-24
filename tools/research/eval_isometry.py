@@ -40,7 +40,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 __all__ = ["main", "build_parser", "cmd_run", "cmd_score", "score_report"]
 

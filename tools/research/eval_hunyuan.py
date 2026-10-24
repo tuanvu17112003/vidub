@@ -36,7 +36,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 EVAL_DIR = ROOT / "eval-cache" / "hunyuan"
 CACHE_GLOB = str(ROOT / ".vidub-cache" / "*" / "segments.json")
 
