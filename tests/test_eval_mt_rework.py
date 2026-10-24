@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from scripts.eval_mt_rework import (
+from tools.research.eval_mt_rework import (
     PROMPT_TEMPLATE_SHA256,
     _ollama_translate,
     _prompt_template_sha256,
@@ -68,7 +68,7 @@ def test_hy_mt2_uses_official_prompt_and_only_relevant_terms(monkeypatch):
         captured.update(payload)
         return {"message": {"content": "Bản dịch."}}
 
-    monkeypatch.setattr("scripts.eval_mt_rework._request_json", fake_request)
+    monkeypatch.setattr("tools.research.eval_mt_rework._request_json", fake_request)
     text = _ollama_translate(
         "http://localhost:11434",
         "hy-mt2-local",

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.eval_asr_rework import _verify_audio_hashes, main, run_asr_cases
+from tools.research.eval_asr_rework import _verify_audio_hashes, main, run_asr_cases
 
 
 def test_run_asr_cases_keeps_windows_ids_and_unicode(tmp_path):

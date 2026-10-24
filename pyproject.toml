@@ -73,3 +73,15 @@ testpaths = ["tests"]
 markers = [
     "slow: slow tests that run heavy models (e.g. demucs separation)",
 ]
+
+[tool.ruff]
+# tools/research is frozen research code moved out of scripts/ in the 2026-10-25
+# optimization round; it is not maintained, so it is excluded from linting.
+extend-exclude = ["tools/research"]
+
+[tool.ruff.lint.per-file-ignores]
+# Deliberate import order: DLL/env wiring must run before the engine imports.
+"vidub/__init__.py" = ["E402"]
+"vidub/engines/tts/voxcpm2.py" = ["E402"]
+# importorskip("gradio") must run before vidub.ui is imported.
+"tests/test_ui.py" = ["E402"]

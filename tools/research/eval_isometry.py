@@ -18,14 +18,14 @@ Two subcommands:
 
 Usage::
 
-    ./.venv/Scripts/python.exe scripts/eval_isometry.py run \
+    ./.venv/Scripts/python.exe tools/research/eval_isometry.py run \
         --input .vidub-cache/downloads/generic-youtube-a7TOameRqoY.mkv \
         --cache-dir .vidub-cache-iso/run-on \
         --output-dir .vidub-cache-iso/work-on \
         --mt-engine hunyuan --mode subtitles-only --force translate \
         --seed-from .vidub-cache/fbae346ba03869da6f62f85cd97eeb82c9b5d964
 
-    ./.venv/Scripts/python.exe scripts/eval_isometry.py score \
+    ./.venv/Scripts/python.exe tools/research/eval_isometry.py score \
         --run .vidub-cache-iso/run-on/<video_hash> --json eval-cache/iso1/on.json
 """
 

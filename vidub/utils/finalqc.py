@@ -105,7 +105,6 @@ def measure_wav(path: str | Path) -> dict:
         with wave.open(str(path), "rb") as wav_file:
             rate = wav_file.getframerate() or 1
             frames = wav_file.getnframes()
-            channels = wav_file.getnchannels() or 1
             width = wav_file.getsampwidth()
             raw = wav_file.readframes(frames)
     except (OSError, wave.Error, EOFError) as exc:

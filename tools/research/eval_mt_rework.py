@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
-from scripts.eval_asr_rework import _GpuMemorySampler
+from tools.research.eval_asr_rework import _GpuMemorySampler
 
 __all__ = ["run_mt_cases", "main"]
 

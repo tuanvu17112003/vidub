@@ -3,10 +3,10 @@
 Two subcommands, each run under its own interpreter:
 
     # generation (MAIN venv; engine deps live here)
-    ./.venv/Scripts/python.exe scripts/eval_hunyuan.py generate [--limit N] [--systems a,b]
+    ./.venv/Scripts/python.exe tools/research/eval_hunyuan.py generate [--limit N] [--systems a,b]
 
     # scoring (SCRATCH venv; transquest pins an old transformers)
-    ./.eval-venv/Scripts/python.exe scripts/eval_hunyuan.py score
+    ./.eval-venv/Scripts/python.exe tools/research/eval_hunyuan.py score
 
 ``generate`` translates one shared corpus with every system
 (``envit5``, ``qwen``, ``hunyuan-q6``, ``hunyuan-q4``, ``refine-envit5``,

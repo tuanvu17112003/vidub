@@ -12,10 +12,10 @@ AFTER = ``sentence_units=True`` (default) — into **separate scratch cache dirs
 
 Usage::
 
-    ./.venv/Scripts/python.exe scripts/eval_sentence_units.py run
-    ./.venv/Scripts/python.exe scripts/eval_sentence_units.py run --mt-engine hunyuan
-    ./.venv/Scripts/python.exe scripts/eval_sentence_units.py score
-    ./.venv/Scripts/python.exe scripts/eval_sentence_units.py rows
+    ./.venv/Scripts/python.exe tools/research/eval_sentence_units.py run
+    ./.venv/Scripts/python.exe tools/research/eval_sentence_units.py run --mt-engine hunyuan
+    ./.venv/Scripts/python.exe tools/research/eval_sentence_units.py score
+    ./.venv/Scripts/python.exe tools/research/eval_sentence_units.py rows
 
 Everything is written under the scratch roots ``.vidub-cache-tu1/`` (caches + the
 per-run output dirs) and ``eval-cache/tu1/`` (scores + run registry); the User's

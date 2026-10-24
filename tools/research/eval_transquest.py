@@ -6,7 +6,7 @@ class, separation, AUC, best-separating threshold).
 
 RUNS UNDER THE SCRATCH INTERPRETER ONLY (transquest pins an old transformers):
 
-    ./.eval-venv/Scripts/python.exe scripts/eval_transquest.py
+    ./.eval-venv/Scripts/python.exe tools/research/eval_transquest.py
 
 The main ``.venv`` never sees this script's dependency: ``transquest`` is
 deliberately absent from ``pyproject.toml``.

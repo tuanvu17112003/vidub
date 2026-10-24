@@ -29,9 +29,9 @@ Pre-registered metrics (declared before reading the numbers, see
 
 Usage::
 
-    ./.venv/Scripts/python.exe scripts/eval_unit_audio.py run
-    ./.venv/Scripts/python.exe scripts/eval_unit_audio.py score
-    ./.venv/Scripts/python.exe scripts/eval_unit_audio.py rows
+    ./.venv/Scripts/python.exe tools/research/eval_unit_audio.py run
+    ./.venv/Scripts/python.exe tools/research/eval_unit_audio.py score
+    ./.venv/Scripts/python.exe tools/research/eval_unit_audio.py rows
 """
 
 from __future__ import annotations

@@ -18,7 +18,6 @@ import pytest
 import vidub.pipeline as pipeline
 from vidub.config import JobConfig, validate_clone_speakers
 from vidub.manifest import JobManifest
-from vidub.stages import references as references_mod
 from vidub.stages.references import (
     REFERENCES_DIR,
     REFERENCES_NAME,

@@ -6,7 +6,6 @@ import pytest
 
 from vidub.utils.fit import (
     CONCISE_CHARS_PER_SECOND,
-    MAX_NEIGHBOR_DELTA,
     MIN_CONCISE_CHARS,
     PACE_BASE_MAX,
     PACE_BASE_MIN,

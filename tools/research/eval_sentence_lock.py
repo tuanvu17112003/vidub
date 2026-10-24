@@ -28,12 +28,12 @@ caches or deliverables.
 
 Usage::
 
-    ./.venv/Scripts/python.exe scripts/eval_sentence_lock.py \
+    ./.venv/Scripts/python.exe tools/research/eval_sentence_lock.py \
         score --run .vidub-cache-sa1/run/<hash> \
               --baseline .vidub-cache/<hash> \
               --json eval-cache/sa1/scores.json
 
-    ./.venv/Scripts/python.exe scripts/eval_sentence_lock.py \
+    ./.venv/Scripts/python.exe tools/research/eval_sentence_lock.py \
         run --url <url> --cache-dir .vidub-cache-sa1 \
             --output-dir .vidub-cache-sa1/work --mt-engine hunyuan
 """

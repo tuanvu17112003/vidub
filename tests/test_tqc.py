@@ -10,12 +10,8 @@ from pathlib import Path
 import pytest
 
 from vidub.engines.mt.base import BaseTranslator
-from vidub.utils import tqc
 from vidub.utils.tqc import (
-    CONSISTENCY_JACCARD_MIN,
     ENTITY_STOPLIST,
-    LENGTH_RATIO_MIN,
-    ROUNDTRIP_F1_MIN,
     correct_rows,
     digits_of,
     extract_entities,

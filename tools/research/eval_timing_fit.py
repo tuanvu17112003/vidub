@@ -16,9 +16,9 @@ from ``timed.json`` + ``script.json`` + ``timing.json``:
 
 Usage::
 
-    ./.venv/Scripts/python.exe scripts/eval_timing_fit.py run
-    ./.venv/Scripts/python.exe scripts/eval_timing_fit.py score
-    ./.venv/Scripts/python.exe scripts/eval_timing_fit.py rows
+    ./.venv/Scripts/python.exe tools/research/eval_timing_fit.py run
+    ./.venv/Scripts/python.exe tools/research/eval_timing_fit.py score
+    ./.venv/Scripts/python.exe tools/research/eval_timing_fit.py rows
 
 Everything is written under the scratch roots ``.vidub-cache-fit1/`` (caches + the
 per-run output dirs) and ``eval-cache/fit1/`` (scores + run registry); the User's
