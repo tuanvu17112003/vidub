@@ -33,20 +33,26 @@ import gradio as gr
 from vidub.config import (
     ASR_PRESETS,
     DEFAULT_ASR_MODEL,
+    DEFAULT_DIARIZE_MODEL,
     DEFAULT_HUNYUAN_HOST,
     DEFAULT_HUNYUAN_MODEL,
+    DEFAULT_ISOMETRIC,
+    DEFAULT_ISOMETRIC_CPS,
+    DEFAULT_ISOMETRIC_HEADROOM,
+    DEFAULT_ISOMETRIC_SHORT_COVERAGE,
+    DEFAULT_ISOMETRIC_SHORT_WINDOW,
     DEFAULT_LOUDNESS_I,
     DEFAULT_LOUDNESS_LRA,
     DEFAULT_LOUDNESS_TP,
     DEFAULT_MT_ENGINE,
     DEFAULT_OLLAMA_HOST,
     DEFAULT_OLLAMA_MODEL,
+    DEFAULT_SPEED_AS_IS,
+    DEFAULT_SPEED_CAP,
     DEFAULT_SUB_FONT_SIZE,
     DEFAULT_SUB_POSITION,
     DEFAULT_TAIL_PAD,
     DEFAULT_VOXCPM2_VOICE,
-    MT_ENGINES,
-    SUB_POSITIONS,
     SUBTITLES_ONLY,
     TTS_ENGINES,
     VOXCPM2_VOICE_PROFILES,
@@ -58,6 +64,7 @@ from vidub.config import (
     validate_clone_speakers,
     validate_langs,
 )
+from vidub.options import OPTION_SPECS
 from vidub.manifest import JobManifest
 from vidub.pipeline import PipelineCancelled, STAGES, required_stages, run_pipeline
 from vidub.stages import export as export_mod
@@ -164,6 +171,7 @@ def form_to_config(
     sub_position: str = DEFAULT_SUB_POSITION,
     sub_font_size: int = DEFAULT_SUB_FONT_SIZE,
     asr_model: str = DEFAULT_ASR_MODEL,
+    words: bool = True,
     tts_engine: str = "piper",
     allow_nc_models: bool = False,
     diarize: bool = False,
@@ -178,8 +186,9 @@ def form_to_config(
     ollama_host: str = DEFAULT_OLLAMA_HOST,
     hunyuan_model: str = DEFAULT_HUNYUAN_MODEL,
     hunyuan_host: str = DEFAULT_HUNYUAN_HOST,
-    hunyuan_refine: bool = False,
+    hunyuan_refine: bool | None = None,
     hunyuan_samples: int = 3,
+    hunyuan_refine_max_units: int = 40,
     fusion_model: str = "",
     sentence_units: bool = True,
     restore_punct: bool = False,
@@ -189,6 +198,19 @@ def form_to_config(
     qc_tts: bool = True,
     qc_final: bool = True,
     tts_qc_mos_min: float = 3.0,
+    isometric: bool = DEFAULT_ISOMETRIC,
+    isometric_headroom: float = DEFAULT_ISOMETRIC_HEADROOM,
+    isometric_cps: float = DEFAULT_ISOMETRIC_CPS,
+    isometric_short_coverage: float = DEFAULT_ISOMETRIC_SHORT_COVERAGE,
+    isometric_short_window: float = DEFAULT_ISOMETRIC_SHORT_WINDOW,
+    speed_as_is: float = DEFAULT_SPEED_AS_IS,
+    speed_cap: float = DEFAULT_SPEED_CAP,
+    retranslate: bool = True,
+    tts_rate_fit: bool = True,
+    recenter_audio: bool = True,
+    align_display: bool = True,
+    sub_margin_v: int | None = None,
+    diarize_model: str = DEFAULT_DIARIZE_MODEL,
     src_lang: str = "en",
     tgt_lang: str = "vi",
     allow_lang_mismatch: bool = False,
@@ -222,11 +244,14 @@ def form_to_config(
         mode=mode,
         sub_position=sub_position,
         sub_font_size=sub_font_size,
+        sub_margin_v=sub_margin_v,
         asr_model=asr_model,
+        asr_words=bool(words),
         tts_engine=tts_engine,
         voxcpm2_voice=voxcpm2_voice,
         allow_nc_models=bool(allow_nc_models),
         diarize=bool(diarize),
+        diarize_model=diarize_model,
         clone_speakers=bool(clone_speakers),
         glossary_path=str(glossary_file) if glossary_file else None,
         loudness_target_i=(
@@ -241,8 +266,11 @@ def form_to_config(
         ollama_host=ollama_host,
         hunyuan_model=hunyuan_model,
         hunyuan_host=hunyuan_host,
-        hunyuan_refine=bool(hunyuan_refine),
+        # Tri-state: None means "auto" (the pass follows the MT engine), the
+        # same contract as the CLI's --hunyuan-refine BooleanOptional default.
+        hunyuan_refine=hunyuan_refine,
         hunyuan_samples=int(hunyuan_samples),
+        hunyuan_refine_max_units=int(hunyuan_refine_max_units),
         fusion_model=fusion_model,
         sentence_units=bool(sentence_units),
         restore_punct=bool(restore_punct),
@@ -252,6 +280,17 @@ def form_to_config(
         qc_tts=bool(qc_tts),
         qc_final=bool(qc_final),
         tts_qc_mos_min=float(tts_qc_mos_min),
+        isometric=bool(isometric),
+        isometric_headroom=isometric_headroom,
+        isometric_cps=isometric_cps,
+        isometric_short_coverage=isometric_short_coverage,
+        isometric_short_window=isometric_short_window,
+        speed_as_is=float(speed_as_is),
+        speed_cap=float(speed_cap),
+        retranslate=bool(retranslate),
+        tts_rate_fit=bool(tts_rate_fit),
+        recenter_audio=bool(recenter_audio),
+        align_display=bool(align_display),
         src_lang=src_lang,
         tgt_lang=tgt_lang,
         allow_lang_mismatch=bool(allow_lang_mismatch),
@@ -448,6 +487,24 @@ def _handle_run(
     tail_pad: float = DEFAULT_TAIL_PAD,
     ref_voice_path=None,
     voxcpm2_voice: str = DEFAULT_VOXCPM2_VOICE,
+    # Options synced from the registry in the optimization round (spec D2/G3).
+    # Appended after the historical positional contract so older callers and
+    # tests keep working.
+    isometric: bool = DEFAULT_ISOMETRIC,
+    isometric_headroom: float = DEFAULT_ISOMETRIC_HEADROOM,
+    isometric_cps: float = DEFAULT_ISOMETRIC_CPS,
+    isometric_short_coverage: float = DEFAULT_ISOMETRIC_SHORT_COVERAGE,
+    isometric_short_window: float = DEFAULT_ISOMETRIC_SHORT_WINDOW,
+    speed_as_is: float = DEFAULT_SPEED_AS_IS,
+    speed_cap: float = DEFAULT_SPEED_CAP,
+    retranslate: bool = True,
+    tts_rate_fit: bool = True,
+    recenter_audio: bool = True,
+    align_display: bool = True,
+    sub_margin_v: int | None = None,
+    diarize_model: str = DEFAULT_DIARIZE_MODEL,
+    hunyuan_refine_max_units: int = 40,
+    words: bool = True,
 ) -> tuple:
     """Run-button handler: validate, start the worker thread, return a snapshot.
 
@@ -473,6 +530,7 @@ def _handle_run(
             sub_position=sub_position,
             sub_font_size=sub_font_size,
             asr_model=asr_model,
+            words=words,
             tts_engine=tts_engine,
             allow_nc_models=allow_nc_models,
             diarize=diarize,
@@ -489,6 +547,7 @@ def _handle_run(
             hunyuan_host=hunyuan_host,
             hunyuan_refine=hunyuan_refine,
             hunyuan_samples=hunyuan_samples,
+            hunyuan_refine_max_units=hunyuan_refine_max_units,
             fusion_model=fusion_model,
             sentence_units=sentence_units,
             restore_punct=restore_punct,
@@ -498,6 +557,19 @@ def _handle_run(
             qc_tts=qc_tts,
             qc_final=qc_final,
             tts_qc_mos_min=tts_qc_mos_min,
+            isometric=isometric,
+            isometric_headroom=isometric_headroom,
+            isometric_cps=isometric_cps,
+            isometric_short_coverage=isometric_short_coverage,
+            isometric_short_window=isometric_short_window,
+            speed_as_is=speed_as_is,
+            speed_cap=speed_cap,
+            retranslate=retranslate,
+            tts_rate_fit=tts_rate_fit,
+            recenter_audio=recenter_audio,
+            align_display=align_display,
+            sub_margin_v=sub_margin_v,
+            diarize_model=diarize_model,
             src_lang=src_lang,
             tgt_lang=tgt_lang,
             allow_lang_mismatch=allow_lang_mismatch,
@@ -1388,10 +1460,72 @@ def _safe(fn, fallback=None):
 
 
 # ----------------------------------------------------------------- app build
+def _make_widget(spec, defaults):
+    """Build the Gradio component for one registry spec's UI kind.
+
+    The registry (``vidub.options``) is the single source of truth for the
+    widget type, label, choices and default value; component-level bounds
+    that the current form relies on are recorded as explicit special cases
+    here rather than duplicated per widget.
+    """
+    label = spec.ui_label
+    if spec.field == "hunyuan_refine":
+        # Tri-state dropdown (spec G3): a checkbox cannot carry None/auto.
+        return gr.Dropdown(
+            choices=[("Auto (recommended)", None), ("On", True), ("Off", False)],
+            value=getattr(defaults, spec.field),
+            type="value",
+            label=label,
+        )
+    if spec.ui == "checkbox":
+        return gr.Checkbox(value=bool(getattr(defaults, spec.field)), label=label)
+    if spec.ui == "number":
+        value = getattr(defaults, spec.field)
+        kwargs: dict = {"value": value, "label": label}
+        if spec.field == "sub_font_size":
+            kwargs.update(minimum=1, step=1)
+        elif spec.field == "hunyuan_samples":
+            kwargs.update(minimum=1, maximum=10, step=1)
+        elif spec.field == "tts_qc_mos_min":
+            kwargs.update(minimum=0, maximum=5, step=0.1)
+        return gr.Number(**kwargs)
+    if spec.ui == "dropdown":
+        if spec.field == "asr_model":
+            # Custom values allowed: the CLI accepts any HF repo id too.
+            return gr.Dropdown(
+                choices=ASR_MODEL_CHOICES,
+                value=getattr(defaults, spec.field),
+                allow_custom_value=True,
+                label=label,
+            )
+        choices = spec.ui_choices or [(c, c) for c in spec.choices]
+        kwargs = {"value": getattr(defaults, spec.field), "label": label}
+        if spec.field == "voxcpm2_voice":
+            # Historical behavior: hidden until the TTS engine is voxcpm2
+            # (the tts_engine.change handler toggles it back on).
+            kwargs["visible"] = defaults.tts_engine == "voxcpm2"
+        return gr.Dropdown(choices=choices, **kwargs)
+    # spec.ui == "text"
+    return gr.Textbox(value=getattr(defaults, spec.field), label=label)
+
+
 def build_app(cfg_defaults: JobConfig | None = None):
-    """Build (but do not launch) the Gradio app; return ``(app, state)``."""
+    """Build (but do not launch) the Gradio app; return ``(app, state)``.
+
+    Test seams: ``app._vidub_widgets`` maps registry field names to their
+    components and ``app._vidub_inputs`` is the exact positional list Gradio
+    hands to ``_handle_run`` (pinned by ``tests/test_ui_registry.py``).
+    """
     defaults = cfg_defaults or JobConfig()
     state = new_state()
+    _spec = {spec.field: spec for spec in OPTION_SPECS}
+    widgets: dict[str, object] = {}
+
+    def w(field: str):
+        """Registry-built component for ``field`` (recorded for the tests)."""
+        component = _make_widget(_spec[field], defaults)
+        widgets[field] = component
+        return component
 
     with gr.Blocks(title="ViDub") as app:
         gr.Markdown(
@@ -1409,22 +1543,10 @@ def build_app(cfg_defaults: JobConfig | None = None):
                 input_url = gr.Textbox(
                     label="… or paste a URL", placeholder="https://…"
                 )
-                mode = gr.Dropdown(
-                    choices=MODE_CHOICES_LABELED,
-                    value=defaults.mode,
-                    label="Mode (Subtitles only = vietsub, no TTS)",
-                )
-                sub_position = gr.Dropdown(
-                    choices=list(SUB_POSITIONS),
-                    value=defaults.sub_position,
-                    label="Subtitle position (subtitles-only / --burn)",
-                )
-                sub_font_size = gr.Number(
-                    value=defaults.sub_font_size,
-                    minimum=1,
-                    step=1,
-                    label="Subtitle font size (subtitles-only / --burn)",
-                )
+                mode = w("mode")
+                sub_position = w("sub_position")
+                sub_font_size = w("sub_font_size")
+                sub_margin_v = w("sub_margin_v")
                 burn_subtitles = gr.Checkbox(
                     value=False,
                     label=(
@@ -1432,17 +1554,9 @@ def build_app(cfg_defaults: JobConfig | None = None):
                         "(re-encode; subtitles-only / --burn)"
                     ),
                 )
-                asr_model = gr.Dropdown(
-                    choices=ASR_MODEL_CHOICES,
-                    value=defaults.asr_model,
-                    allow_custom_value=True,
-                    label="ASR model",
-                )
-                tts_engine = gr.Dropdown(
-                    choices=TTS_ENGINE_CHOICES,
-                    value=defaults.tts_engine,
-                    label="TTS engine",
-                )
+                asr_model = w("asr_model")
+                asr_words = w("asr_words")
+                tts_engine = w("tts_engine")
                 voice_reference = gr.Audio(
                     value=defaults.ref_voice,
                     type="filepath",
@@ -1451,40 +1565,18 @@ def build_app(cfg_defaults: JobConfig | None = None):
                     label="Voice sample for VoxCPM2 (optional; overrides profile)",
                     visible=defaults.tts_engine == "voxcpm2",
                 )
-                voxcpm2_voice = gr.Dropdown(
-                    choices=[
-                        (profile["label"], name)
-                        for name, profile in VOXCPM2_VOICE_PROFILES.items()
-                    ],
-                    value=defaults.voxcpm2_voice,
-                    label="VoxCPM2 voice profile",
-                    visible=defaults.tts_engine == "voxcpm2",
-                )
-                allow_nc = gr.Checkbox(
-                    value=defaults.allow_nc_models,
-                    label="Allow non-commercial models (vixtts)",
-                )
-                diarize = gr.Checkbox(
-                    value=defaults.diarize, label="Diarize speakers"
-                )
-                clone_speakers = gr.Checkbox(
-                    value=defaults.clone_speakers,
-                    label="Clone speakers (needs diarize + vixtts)",
-                )
+                voxcpm2_voice = w("voxcpm2_voice")
+                allow_nc = w("allow_nc_models")
+                diarize = w("diarize")
+                clone_speakers = w("clone_speakers")
                 glossary = gr.File(
                     label="Glossary TSV (optional)",
                     file_types=[".tsv"],
                     type="filepath",
                 )
-                loud_target = gr.Number(
-                    value=defaults.loudness_target_i, label="Loudness target (LUFS)"
-                )
-                loud_tp = gr.Number(
-                    value=defaults.loudness_tp, label="True peak (dBTP)"
-                )
-                loud_lra = gr.Number(
-                    value=defaults.loudness_lra, label="Loudness range (LU)"
-                )
+                loud_target = w("loudness_target_i")
+                loud_tp = w("loudness_tp")
+                loud_lra = w("loudness_lra")
                 cache_dir = gr.Textbox(
                     value=defaults.cache_dir, label="Cache dir"
                 )
@@ -1498,90 +1590,55 @@ def build_app(cfg_defaults: JobConfig | None = None):
                         "and split the result back onto the original segments; "
                         "untick to translate ASR segments as-is."
                     )
-                    mt_engine = gr.Dropdown(
-                        choices=list(MT_ENGINES),
-                        value=defaults.mt_engine,
-                        label="MT engine",
+                    mt_engine = w("mt_engine")
+                    ollama_model = w("ollama_model")
+                    ollama_host = w("ollama_host")
+                    hunyuan_model = w("hunyuan_model")
+                    hunyuan_host = w("hunyuan_host")
+                    hunyuan_refine = w("hunyuan_refine")
+                    hunyuan_samples = w("hunyuan_samples")
+                    hunyuan_refine_max_units = w("hunyuan_refine_max_units")
+                    fusion_model = w("fusion_model")
+                    diarize_model = w("diarize_model")
+                    sentence_units = w("sentence_units")
+                    restore_punct = w("restore_punct")
+                    qc_transcript = w("qc_transcript")
+                    qc_subtitles = w("qc_subtitles")
+                    qc_translation = w("qc_translation")
+                    qc_tts = w("qc_tts")
+                    qc_final = w("qc_final")
+                    tts_qc_mos_min = w("tts_qc_mos_min")
+                with gr.Accordion("Timing & budgeting", open=False):
+                    gr.Markdown(
+                        "Timing levers: stretch/re-translation policy, "
+                        "per-synthesis rate fitting and the ISO-1 isometric "
+                        "length budget (opt-in). Defaults match the CLI."
                     )
-                    ollama_model = gr.Textbox(
-                        value=defaults.ollama_model, label="Ollama model"
-                    )
-                    ollama_host = gr.Textbox(
-                        value=defaults.ollama_host, label="Ollama host"
-                    )
-                    hunyuan_model = gr.Textbox(
-                        value=defaults.hunyuan_model, label="Hunyuan model"
-                    )
-                    hunyuan_host = gr.Textbox(
-                        value=defaults.hunyuan_host, label="Hunyuan host"
-                    )
-                    hunyuan_refine = gr.Checkbox(
-                        value=defaults.hunyuan_refine,
-                        label="Hunyuan refine pass",
-                    )
-                    hunyuan_samples = gr.Number(
-                        value=defaults.hunyuan_samples,
-                        minimum=1,
-                        maximum=10,
-                        step=1,
-                        label="Hunyuan refine samples",
-                    )
-                    fusion_model = gr.Textbox(
-                        value=defaults.fusion_model, label="Fusion model"
-                    )
-                    sentence_units = gr.Checkbox(
-                        value=defaults.sentence_units,
-                        label="Sentence-level translation units",
-                    )
-                    restore_punct = gr.Checkbox(
-                        value=defaults.restore_punct,
-                        label="Restore punctuation (source)",
-                    )
-                    qc_transcript = gr.Checkbox(
-                        value=defaults.qc_transcript, label="QC: transcript"
-                    )
-                    qc_subtitles = gr.Checkbox(
-                        value=defaults.qc_subtitles, label="QC: subtitles"
-                    )
-                    qc_translation = gr.Checkbox(
-                        value=defaults.qc_translation, label="QC: translation"
-                    )
-                    qc_tts = gr.Checkbox(
-                        value=defaults.qc_tts, label="QC: TTS"
-                    )
-                    qc_final = gr.Checkbox(
-                        value=defaults.qc_final, label="QC: final gate"
-                    )
-                    tts_qc_mos_min = gr.Number(
-                        value=defaults.tts_qc_mos_min,
-                        minimum=0,
-                        maximum=5,
-                        step=0.1,
-                        label="TTS QC min MOS",
-                    )
+                    speed_as_is = w("speed_as_is")
+                    speed_cap = w("speed_cap")
+                    retranslate = w("retranslate")
+                    tts_rate_fit = w("tts_rate_fit")
+                    recenter_audio = w("recenter_audio")
+                    align_display = w("align_display")
+                    tail_pad = w("tail_pad")
+                    isometric = w("isometric")
+                    isometric_headroom = w("isometric_headroom")
+                    isometric_cps = w("isometric_cps")
+                    isometric_short_coverage = w("isometric_short_coverage")
+                    isometric_short_window = w("isometric_short_window")
                 force_stages = gr.CheckboxGroup(
                     choices=[*STAGES, "diarize", "references"],
                     value=[],
                     label="Re-run these stages (force)",
                 )
                 gr.Markdown("_Forcing a stage also re-runs every stage after it._")
-                src_lang = gr.Textbox(
-                    value=defaults.src_lang, label="Source language"
-                )
-                tgt_lang = gr.Textbox(
-                    value=defaults.tgt_lang, label="Target language"
-                )
-                allow_lang_mismatch = gr.Checkbox(
-                    value=defaults.allow_lang_mismatch,
-                    label="Allow language mismatch (override the ASR guard)",
-                )
+                src_lang = w("src_lang")
+                tgt_lang = w("tgt_lang")
+                allow_lang_mismatch = w("allow_lang_mismatch")
                 pronounce = gr.File(
                     label="Pronunciation TSV (changes TTS speech only)",
                     file_types=[".tsv"],
                     type="filepath",
-                )
-                tail_pad = gr.Number(
-                    value=defaults.tail_pad, label="Tail pad (s)"
                 )
                 gr.Markdown(
                     "**Test presets** — one click to configure the M5 features "
@@ -1671,6 +1728,9 @@ def build_app(cfg_defaults: JobConfig | None = None):
             report_json,
             qc_md,
         ]
+        # Positional contract with _handle_run: the historical order first,
+        # then the options synced from the registry in the optimization round
+        # (spec D2/G3), matching the handler's appended keyword parameters.
         inputs = [
             video_file,
             input_url,
@@ -1712,6 +1772,21 @@ def build_app(cfg_defaults: JobConfig | None = None):
             tail_pad,
             voice_reference,
             voxcpm2_voice,
+            isometric,
+            isometric_headroom,
+            isometric_cps,
+            isometric_short_coverage,
+            isometric_short_window,
+            speed_as_is,
+            speed_cap,
+            retranslate,
+            tts_rate_fit,
+            recenter_audio,
+            align_display,
+            sub_margin_v,
+            diarize_model,
+            hunyuan_refine_max_units,
+            asr_words,
         ]
 
         run_btn.click(
@@ -1801,6 +1876,8 @@ def build_app(cfg_defaults: JobConfig | None = None):
             outputs=outputs,
         )
 
+    app._vidub_widgets = widgets
+    app._vidub_inputs = inputs
     return app, state
 
 

@@ -85,3 +85,4 @@ extend-exclude = ["tools/research"]
 "vidub/engines/tts/voxcpm2.py" = ["E402"]
 # importorskip("gradio") must run before vidub.ui is imported.
 "tests/test_ui.py" = ["E402"]
+"tests/test_ui_registry.py" = ["E402"]
