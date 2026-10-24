@@ -1,0 +1,210 @@
+usage: vidub run [-h] [--mode {dub,voice-over,subtitles-only,subtitles}]
+                 [--src-lang SRC_LANG] [--tgt-lang TGT_LANG]
+                 [--asr-model ASR_MODEL] [--words | --no-words]
+                 [--restore-punct] [--qc-transcript | --no-qc-transcript]
+                 [--qc-subtitles | --no-qc-subtitles | --subtitle-qc | --no-subtitle-qc]
+                 [--qc-translation | --no-qc-translation]
+                 [--sentence-units | --no-sentence-units]
+                 [--isometric | --no-isometric] [--isometric-headroom FLOAT]
+                 [--isometric-cps FLOAT] [--isometric-short-coverage FLOAT]
+                 [--isometric-short-window SECONDS]
+                 [--qc-final | --no-qc-final] [--qc-tts | --no-qc-tts]
+                 [--tts-qc-mos-min MOS] [--mt-engine {envit5,ollama,hunyuan}]
+                 [--ollama-model MODEL] [--ollama-host URL]
+                 [--hunyuan-model MODEL] [--hunyuan-host URL]
+                 [--hunyuan-refine | --no-hunyuan-refine]
+                 [--hunyuan-refine-max-units N] [--fusion-model MODEL]
+                 [--hunyuan-samples K] [--tts-engine {piper,voxcpm2,vixtts}]
+                 [--allow-nc-models] [--allow-lang-mismatch] [--ref-voice WAV]
+                 [--diarize] [--clone-speakers] [--voice-map JSON]
+                 [--glossary PATH] [--pronounce PATH] [--resume | --no-resume]
+                 [--force STAGE[,STAGE]] [--burn] [--sub-pos POS]
+                 [--sub-font-size N] [--sub-margin-v N]
+                 [--loudness-target LUFS] [--loudness-tp DBTP]
+                 [--loudness-lra LU] [--speed-as-is R] [--speed-cap R]
+                 [--no-retranslate] [--tail-pad S]
+                 [--tts-rate-fit | --no-tts-rate-fit]
+                 [--recenter | --no-recenter]
+                 [--align-display | --no-align-display]
+                 [--cache-dir CACHE_DIR] [--clean] [--report]
+                 [input]
+
+positional arguments:
+  input                 input video file
+
+options:
+  -h, --help            show this help message and exit
+  --mode {dub,voice-over,subtitles-only,subtitles}
+                        output mode (default: dub). 'subtitles' is an alias
+                        for 'subtitles-only' (the same mode)
+  --src-lang SRC_LANG   source language (default: en)
+  --tgt-lang TGT_LANG   target language (default: vi)
+  --asr-model ASR_MODEL
+                        ASR model: a preset (cpu-tiny, cpu-base, cpu-small,
+                        gpu-large, vi-small, vi-medium), a faster-whisper size
+                        (tiny, base, small, medium, large-v3), or a Hugging
+                        Face repo id. Default: auto (large-v3 on GPU, else
+                        base).
+  --words, --no-words   word-level ASR timestamps (default: on) (default:
+                        True)
+  --restore-punct       opt-in punctuation/casing restoration of the source
+                        transcript (oliverguhr/fullstop-punctuation-multilang-
+                        large; ~2.2 GB download on first use). Already-
+                        punctuated segments are left untouched. Default: off
+  --qc-transcript, --no-qc-transcript
+                        Level-1 transcript QC: classify ASR segments, retry
+                        flagged windows once and record a transcript verdict
+                        (default: on) (default: True)
+  --qc-subtitles, --no-qc-subtitles, --subtitle-qc, --no-subtitle-qc
+                        subtitle standards QC: wrap/re-split over-long or
+                        over-CPS Vietnamese cues and count profile violations
+                        (default: on; disable with --no-qc-subtitles or --no-
+                        subtitle-qc) (default: True)
+  --qc-translation, --no-qc-translation
+                        Level-2 translation QC: deterministic
+                        number/entity/terminology and consistency signals,
+                        glossary-splice corrections and a translation verdict
+                        (default: on) (default: True)
+  --sentence-units, --no-sentence-units
+                        translate whole sentences instead of ASR fragments:
+                        merged fragment runs are translated together and split
+                        back onto the original segments (default: on; disable
+                        with --no-sentence-units) (default: True)
+  --isometric, --no-isometric
+                        isometric length budgeting (ISO-1, sentence-unit
+                        path): compute each unit's character budget from its
+                        time window, pass it to the engine and run one bounded
+                        budgeted re-translation for still-over-budget units,
+                        accepted only when it is genuinely better (default:
+                        off since v0.11.0; enable with --isometric) (default:
+                        False)
+  --isometric-headroom FLOAT
+                        fraction of the window's natural-pace capacity a
+                        translation may use (0 < value <= 1; default 0.9)
+  --isometric-cps FLOAT
+                        natural Vietnamese speaking pace in characters per
+                        second used by the budget (10-30; default 20)
+  --isometric-short-coverage FLOAT
+                        adaptive omission floor for tiny windows: a window
+                        below --isometric-short-window may accept a shorter
+                        text down to this word coverage (0.5-0.75; default
+                        0.65); always recorded per unit
+  --isometric-short-window SECONDS
+                        tiny-window threshold for the adaptive omission floor
+                        (strictly below this many seconds; 0-3; default 1.8)
+  --qc-final, --no-qc-final
+                        final QC gate: aggregate
+                        transcript/translation/subtitle verdicts and fresh
+                        output checks into a quality verdict (default: on; a
+                        fail makes the run exit non-zero) (default: True)
+  --qc-tts, --no-qc-tts
+                        per-clip TTS QC: score every final fitted clip with
+                        NISQA-TTS, retry low-MOS clips once with changed
+                        settings and write review packets (default: on; needs
+                        the 'torchmetrics' dependency) (default: True)
+  --tts-qc-mos-min MOS  per-clip TTS QC: retry/review clips below this NISQA
+                        MOS (default 3.0)
+  --mt-engine {envit5,ollama,hunyuan}
+                        machine-translation engine (default: envit5). 'ollama'
+                        runs the contextual translate->reflect->improve loop
+                        on a local Ollama model; every LLM output is gated by
+                        deterministic validators and falls back to envit5 per
+                        failed segment. 'hunyuan' runs the HY-MT1.5-7B
+                        translation specialist via a local Ollama server
+                        (official GGUF, opt-in); envit5 stays the default and
+                        per-segment fallback.
+  --ollama-model MODEL  Ollama model for --mt-engine ollama (default:
+                        qwen2.5:7b; pull it with 'ollama pull qwen2.5:7b')
+  --ollama-host URL     Ollama server base URL (default:
+                        http://127.0.0.1:11434)
+  --hunyuan-model MODEL
+                        Hunyuan model for --mt-engine hunyuan (default:
+                        hf.co/tencent/HY-MT1.5-7B-GGUF:Q6_K; pull it with
+                        'ollama run hf.co/tencent/HY-MT1.5-7B-GGUF:Q6_K')
+  --hunyuan-host URL    Hunyuan server base URL (default:
+                        http://127.0.0.1:11434)
+  --hunyuan-refine, --no-hunyuan-refine
+                        translation refine pass (M5-T2). ON by default for
+                        --mt-engine hunyuan: after the QC battery, still-
+                        flagged units get ONE cycle of Hunyuan candidate
+                        samples, accepted only when strictly better. --no-
+                        hunyuan-refine restores the previous (no-refine)
+                        behaviour; non-hunyuan engines never refine (default:
+                        auto)
+  --hunyuan-refine-max-units N
+                        cost guard for the refine pass: at most N still-
+                        flagged units are refined per run, the rest are
+                        recorded as budget skips (default: 40)
+  --fusion-model MODEL  optional Hunyuan-MT-Chimera-7B GGUF model tag on the
+                        same Ollama host, used to fuse --hunyuan-refine
+                        candidates (no-op when empty; see the docs for the
+                        exact tag)
+  --hunyuan-samples K   Hunyuan candidates sampled per refined row (default:
+                        3)
+  --tts-engine {piper,voxcpm2,vixtts}
+                        TTS engine (default: piper). 'vixtts' needs --allow-
+                        nc-models (CPML non-commercial weights).
+  --allow-nc-models     allow non-commercial model weights (required for
+                        vixtts)
+  --allow-lang-mismatch
+                        skip the post-ASR language guard (allow a transcript
+                        that looks like the wrong language, e.g. a vi-
+                        specialist model on English)
+  --ref-voice WAV       reference voice for cloning (ViXTTS; default: shipped
+                        sample)
+  --diarize             detect speakers with pyannote 3.1 and give each a
+                        voice (needs HF_TOKEN + accepted gated models)
+  --clone-speakers      clone each diarized speaker's own voice from the
+                        separated vocals (needs --diarize --tts-engine vixtts
+                        --allow-nc-models)
+  --voice-map JSON      per-speaker voice map, e.g. '{"spk1": "25hours"}'
+  --glossary PATH       TSV glossary of 'term<TAB>translation' rows applied to
+                        the MT output after translation (see README
+                        'Translation glossary')
+  --pronounce PATH      TSV pronunciation lexicon of 'written<TAB>spoken' rows
+                        applied to the TTS text only; subtitles keep the
+                        written form (see README 'Pronunciation lexicon')
+  --resume, --no-resume
+                        skip stages already done (default: on) (default: True)
+  --force STAGE[,STAGE]
+                        re-run these pipeline stages
+  --burn                burn subtitles into the video
+  --sub-pos POS         subtitle position for the .ass export and --burn:
+                        bottom|top|center (default bottom)
+  --sub-font-size N     subtitle font size in points for the .ass export and
+                        --burn (default 24)
+  --sub-margin-v N      subtitle vertical margin in pixels for the .ass export
+                        and --burn; default is per position (bottom/top 24,
+                        center 0)
+  --loudness-target LUFS
+                        loudnorm integrated loudness target (default -16)
+  --loudness-tp DBTP    loudnorm true-peak target (default -1.5)
+  --loudness-lra LU     loudnorm loudness range (default 11)
+  --speed-as-is R       timing: do not stretch a segment within this ratio of
+                        its window (default 1.1)
+  --speed-cap R         timing: hardest atempo a segment may receive before it
+                        is re-translated (default 1.2)
+  --no-retranslate      timing: disable the shortening re-translation retry
+                        (over-long segments are clipped instead)
+  --tail-pad S          timing: extend the FINAL segment's window past the
+                        video end by this many seconds so it is never cut mid-
+                        word (default 2)
+  --tts-rate-fit, --no-tts-rate-fit
+                        timing: preserve natural Piper pace for fitting speech
+                        and re-synthesize overflow faster (per-synthesis
+                        length_scale); --no-tts-rate-fit restores the single
+                        fixed rate (default on) (default: True)
+  --recenter, --no-recenter
+                        timing: shift a fitted clip later into its window's
+                        slack instead of always starting at the segment start;
+                        --no-recenter disables it (default on) (default: True)
+  --align-display, --no-align-display
+                        timing: force-align each multi-member unit's
+                        synthesized audio so every member row gets a real,
+                        word-edge-snapped display span; --no-align-display
+                        skips the alignment ASR and uses the split fallback
+                        (default on) (default: True)
+  --cache-dir CACHE_DIR
+                        cache root (default: .vidub-cache)
+  --clean               wipe the video's cache dir first
+  --report              print report.json at the end

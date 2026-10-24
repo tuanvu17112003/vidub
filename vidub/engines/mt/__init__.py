@@ -1,0 +1,1 @@
+"""Machine-translation engine adapters."""

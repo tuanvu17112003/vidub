@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vidub"
+version = "0.11.0"
+description = "ViDub — free & open-source video translation and Vietnamese dubbing CLI (in development)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ViDub" }]
+keywords = ["video", "translation", "dubbing", "vietnamese", "asr", "tts"]
+dependencies = [
+    "faster-whisper",
+    "pysubs2",
+    "transformers",
+    "sentencepiece",
+    "torch",
+    "piper-tts",
+    "huggingface_hub",
+    "pydub",
+    "demucs",
+    # Per-clip TTS QC (M4-T7): NISQA non-intrusive MOS via TorchMetrics.
+    # pyannote-audio already requires torchmetrics>=1.6.1; librosa/requests
+    # (the metric's other requirements) are installed via the other extras.
+    "torchmetrics>=1.6.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+# CUDA DLLs for the CTranslate2/faster-whisper GPU path. CTranslate2 already
+# bundles cudnn64_9.dll, so only cuBLAS and the CUDA runtime are needed.
+#
+# The CUDA *torch* build (used by Demucs/envit5/ViXTTS) deliberately stays out of
+# this extra: pip extras cannot carry an --index-url, and torch's CUDA wheel ships
+# its own CUDA DLLs in site-packages/torch/lib. On a CUDA machine install it first
+# from the PyTorch index, then the extra (both documented in README):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126
+#   pip install -e ".[gpu]"
+# Keeping it out means a plain `pip install -e .` stays CPU-safe.
+gpu = ["nvidia-cublas-cu12", "nvidia-cuda-runtime-cu12"]
+# URL input (`vidub run <URL>` / `vidub batch <URL>`) downloads via yt-dlp,
+# which is Unlicense (public domain) and optional. Without it, a URL input
+# fails fast with an actionable 'pip install -e ".[youtube]"' message.
+youtube = ["yt-dlp"]
+# Local web UI (`vidub ui`). Gradio is optional; without it the subcommand
+# exits 1 with an actionable 'pip install -e ".[ui]"' message.
+ui = ["gradio"]
+# ViXTTS (natural vi speech + voice cloning) ships CPML non-commercial weights;
+# kept out of the default install. NOTE: coqui-tts' XTTS imports torchaudio and
+# requires torchcodec on torch >= 2.9; VixttsTTS provides a small compatibility
+# shim for those instead of pinning extra binary wheels. The shim itself imports
+# librosa + soundfile, so they are declared explicitly here (not left as
+# transitive deps of coqui-tts).
+nc-tts = ["coqui-tts", "librosa", "soundfile"]
+# VoxCPM2 is an opt-in local Vietnamese voice. Keep its large inference stack
+# out of the default install; the engine can also use VIDUB_VOXCPM2_PYTHON.
+tts-voxcpm2 = ["voxcpm==2.0.3"]
+# Speaker diarization (pyannote 3.1). The models are HF-gated: needs HF_TOKEN
+# and accepted model conditions. NOTE: pyannote.audio depends on torchaudio /
+# torchcodec; install its wheels that match your torch build.
+diarize = ["pyannote.audio"]
+
+[project.scripts]
+vidub = "vidub.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vidub*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: slow tests that run heavy models (e.g. demucs separation)",
+]
