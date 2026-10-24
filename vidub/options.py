@@ -42,11 +42,11 @@ from vidub.config import (
     DEFAULT_TAIL_PAD,
     DEFAULT_VOXCPM2_VOICE,
     MT_ENGINES,
-    SPEED_CAP as _SPEED_CAP_SENTINEL,  # noqa: F401  (re-export guard; unused)
     SUB_POSITIONS,
     SUBTITLES_ONLY,
     TTS_ENGINES,
     VOXCPM2_VOICE_PROFILES,
+    normalize_sub_position,
 )
 
 __all__ = ["OptionSpec", "OPTION_SPECS", "HAND_WRITTEN_FIELDS"]
@@ -85,6 +85,9 @@ class OptionSpec:
 
     metavar: str = ""
     """argparse metavar for value options (``""`` uses the default spelling)."""
+
+    cli_type: object = None
+    """argparse ``type`` callable override (e.g. ``normalize_sub_position``); ``None`` uses the kind's builtin."""
 
     aliases: tuple = ()
     """Extra CLI option strings attached to the same dest (same help text)."""
@@ -178,7 +181,6 @@ OPTION_SPECS: tuple[OptionSpec, ...] = (
         kind="str",
         default="base",
         cli_default=DEFAULT_ASR_MODEL,
-        metavar="MODEL",
         help=(
             "ASR model: a preset (cpu-tiny, cpu-base, cpu-small, gpu-large, "
             "vi-small, vi-medium), a faster-whisper size (tiny, base, small, "
@@ -640,6 +642,7 @@ OPTION_SPECS: tuple[OptionSpec, ...] = (
     OptionSpec(
         field="glossary_path",
         flag="--glossary",
+        dest="glossary",
         kind="path",
         default=None,
         metavar="PATH",
@@ -652,6 +655,7 @@ OPTION_SPECS: tuple[OptionSpec, ...] = (
     OptionSpec(
         field="pronounce_path",
         flag="--pronounce",
+        dest="pronounce",
         kind="path",
         default=None,
         metavar="PATH",
@@ -671,6 +675,7 @@ OPTION_SPECS: tuple[OptionSpec, ...] = (
         default=DEFAULT_SUB_POSITION,
         choices=SUB_POSITIONS,
         metavar="POS",
+        cli_type=normalize_sub_position,
         help=(
             "subtitle position for the .ass export and --burn: "
             f"{'|'.join(SUB_POSITIONS)} (default {DEFAULT_SUB_POSITION})"

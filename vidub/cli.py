@@ -18,36 +18,19 @@ import urllib.request
 from pathlib import Path
 
 from vidub import __version__
+from vidub.options import OPTION_SPECS, OptionSpec
 from vidub.config import (
     ASR_PRESETS,
-    DEFAULT_ASR_MODEL,
     DEFAULT_HUNYUAN_HOST,
     DEFAULT_HUNYUAN_MODEL,
-    DEFAULT_ISOMETRIC,
-    DEFAULT_ISOMETRIC_CPS,
-    DEFAULT_ISOMETRIC_HEADROOM,
-    DEFAULT_ISOMETRIC_SHORT_COVERAGE,
-    DEFAULT_ISOMETRIC_SHORT_WINDOW,
-    DEFAULT_LOUDNESS_I,
-    DEFAULT_LOUDNESS_LRA,
-    DEFAULT_LOUDNESS_TP,
-    DEFAULT_MT_ENGINE,
     DEFAULT_OLLAMA_HOST,
     DEFAULT_OLLAMA_MODEL,
-    DEFAULT_SPEED_AS_IS,
-    DEFAULT_SPEED_CAP,
-    DEFAULT_SUB_FONT_SIZE,
-    DEFAULT_SUB_POSITION,
-    DEFAULT_TAIL_PAD,
-    MT_ENGINES,
-    SUB_POSITIONS,
     TTS_ENGINES,
     JobConfig,
     SUBTITLES_ONLY,
     check_mt_engine,
     check_tts_engine_allowed,
     normalize_mode,
-    normalize_sub_position,
     resolve_asr_model,
     validate_clone_speakers,
 )
@@ -94,57 +77,19 @@ def _build_cfg(args: argparse.Namespace) -> JobConfig:
     # config must not block that mode; dub/voice-over keep the license guard.
     if mode != SUBTITLES_ONLY:
         check_tts_engine_allowed(args.tts_engine, args.allow_nc_models)
-    cfg = JobConfig(
-        src_lang=args.src_lang,
-        tgt_lang=args.tgt_lang,
-        mode=mode,
-        asr_model=args.asr_model,
-        asr_words=args.words,
-        restore_punct=args.restore_punct,
-        qc_transcript=args.qc_transcript,
-        qc_subtitles=args.qc_subtitles,
-        qc_translation=args.qc_translation,
-        sentence_units=args.sentence_units,
-        isometric=args.isometric,
-        isometric_headroom=args.isometric_headroom,
-        isometric_cps=args.isometric_cps,
-        isometric_short_coverage=args.isometric_short_coverage,
-        isometric_short_window=args.isometric_short_window,
-        qc_final=args.qc_final,
-        qc_tts=args.qc_tts,
-        tts_qc_mos_min=args.tts_qc_mos_min,
-        mt_engine=args.mt_engine,
-        ollama_model=args.ollama_model,
-        ollama_host=args.ollama_host,
-        hunyuan_model=args.hunyuan_model,
-        hunyuan_host=args.hunyuan_host,
-        hunyuan_refine=args.hunyuan_refine,
-        fusion_model=args.fusion_model,
-        hunyuan_samples=args.hunyuan_samples,
-        hunyuan_refine_max_units=args.hunyuan_refine_max_units,
-        tts_engine=args.tts_engine,
-        allow_nc_models=args.allow_nc_models,
-        allow_lang_mismatch=args.allow_lang_mismatch,
-        ref_voice=args.ref_voice,
-        glossary_path=args.glossary,
-        pronounce_path=args.pronounce,
-        diarize=args.diarize,
-        clone_speakers=args.clone_speakers,
-        voice_map=_parse_voice_map(args.voice_map),
-        loudness_target_i=args.loudness_target,
-        loudness_tp=args.loudness_tp,
-        loudness_lra=args.loudness_lra,
-        speed_as_is=args.speed_as_is,
-        speed_cap=args.speed_cap,
-        retranslate=args.retranslate,
-        tail_pad=args.tail_pad,
-        tts_rate_fit=args.tts_rate_fit,
-        recenter_audio=args.recenter_audio,
-        align_display=args.align_display,
-        sub_position=args.sub_pos,
-        sub_font_size=args.sub_font_size,
-        sub_margin_v=args.sub_margin_v,
-    )
+    kwargs: dict[str, object] = {}
+    for spec in OPTION_SPECS:
+        if not spec.flag:
+            continue  # UI-only / programmatic-only fields keep their dataclass default
+        raw = getattr(args, spec.dest or spec.field)
+        if spec.transform == "voice_map":
+            kwargs[spec.field] = _parse_voice_map(raw)
+        else:
+            kwargs[spec.field] = raw
+    # ``mode`` is normalized again by JobConfig.__post_init__; passing the raw
+    # spelling keeps the CLI's validation above as the single fail-fast point.
+    kwargs["mode"] = mode
+    cfg = JobConfig(**kwargs)
     if args.cache_dir:
         cfg.cache_dir = args.cache_dir
     # Cross-flag guardrails (cloning needs diarize + vixtts + NC opt-in).
@@ -528,327 +473,63 @@ def cmd_ui(args: argparse.Namespace) -> int:
 
 
 def _add_shared_pipeline_args(p: argparse.ArgumentParser) -> None:
-    """Flags shared by ``vidub run`` and ``vidub batch``."""
+    """Flags shared by ``vidub run`` and ``vidub batch``.
+
+    Generated from :data:`vidub.options.OPTION_SPECS` (the single option
+    registry, spec 2026-10-25 D2). Flag spellings, dests, defaults, aliases
+    and help text reproduce the pre-registry argparse byte-for-byte; run
+    controls that are not ``JobConfig`` options (--resume/--force/--burn)
+    stay hand-written and render where they historically sat.
+    """
+    for spec in OPTION_SPECS:
+        if not spec.flag:
+            continue
+        if spec.field == "sub_position":
+            # Historical help order: the run controls sat between --pronounce
+            # and --sub-pos; keep that order.
+            _add_run_controls(p)
+        _add_spec_args(p, spec)
     p.add_argument(
-        "--mode",
-        choices=["dub", "voice-over", "subtitles-only", "subtitles"],
-        default="dub",
-        help=(
-            "output mode (default: dub). 'subtitles' is an alias for "
-            "'subtitles-only' (the same mode)"
-        ),
+        "--cache-dir", default=None, help="cache root (default: .vidub-cache)"
     )
-    p.add_argument("--src-lang", default="en", help="source language (default: en)")
-    p.add_argument("--tgt-lang", default="vi", help="target language (default: vi)")
-    p.add_argument(
-        "--asr-model",
-        default=DEFAULT_ASR_MODEL,
-        help=(
-            "ASR model: a preset (cpu-tiny, cpu-base, cpu-small, gpu-large, "
-            "vi-small, vi-medium), a faster-whisper size (tiny, base, small, "
-            "medium, large-v3), or a Hugging Face repo id. "
-            f"Default: {DEFAULT_ASR_MODEL} (large-v3 on GPU, else base)."
-        ),
-    )
-    p.add_argument(
-        "--words",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="word-level ASR timestamps (default: on)",
-    )
-    p.add_argument(
-        "--restore-punct",
-        action="store_true",
-        default=False,
-        help=(
-            "opt-in punctuation/casing restoration of the source transcript "
-            "(oliverguhr/fullstop-punctuation-multilang-large; ~2.2 GB download "
-            "on first use). Already-punctuated segments are left untouched. "
-            "Default: off"
-        ),
-    )
-    p.add_argument(
-        "--qc-transcript",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "Level-1 transcript QC: classify ASR segments, retry flagged "
-            "windows once and record a transcript verdict (default: on)"
-        ),
-    )
-    p.add_argument(
-        "--qc-subtitles",
-        "--subtitle-qc",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "subtitle standards QC: wrap/re-split over-long or over-CPS "
-            "Vietnamese cues and count profile violations (default: on; "
-            "disable with --no-qc-subtitles or --no-subtitle-qc)"
-        ),
-    )
-    p.add_argument(
-        "--qc-translation",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "Level-2 translation QC: deterministic number/entity/terminology "
-            "and consistency signals, glossary-splice corrections and a "
-            "translation verdict (default: on)"
-        ),
-    )
-    p.add_argument(
-        "--no-translation-qc",
-        dest="qc_translation",
-        action="store_false",
-        help=argparse.SUPPRESS,
-    )
-    p.add_argument(
-        "--sentence-units",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "translate whole sentences instead of ASR fragments: merged "
-            "fragment runs are translated together and split back onto the "
-            "original segments (default: on; disable with --no-sentence-units)"
-        ),
-    )
-    p.add_argument(
-        "--isometric",
-        action=argparse.BooleanOptionalAction,
-        default=DEFAULT_ISOMETRIC,
-        help=(
-            "isometric length budgeting (ISO-1, sentence-unit path): compute each "
-            "unit's character budget from its time window, pass it to the engine "
-            "and run one bounded budgeted re-translation for still-over-budget "
-            "units, accepted only when it is genuinely better (default: off since "
-            "v0.11.0; enable with --isometric)"
-        ),
-    )
-    p.add_argument(
-        "--isometric-headroom",
-        type=float,
-        default=DEFAULT_ISOMETRIC_HEADROOM,
-        metavar="FLOAT",
-        help=(
-            "fraction of the window's natural-pace capacity a translation may use "
-            f"(0 < value <= 1; default {DEFAULT_ISOMETRIC_HEADROOM})"
-        ),
-    )
-    p.add_argument(
-        "--isometric-cps",
-        type=float,
-        default=DEFAULT_ISOMETRIC_CPS,
-        metavar="FLOAT",
-        help=(
-            "natural Vietnamese speaking pace in characters per second used by "
-            f"the budget (10-30; default {DEFAULT_ISOMETRIC_CPS:g})"
-        ),
-    )
-    p.add_argument(
-        "--isometric-short-coverage",
-        type=float,
-        default=DEFAULT_ISOMETRIC_SHORT_COVERAGE,
-        metavar="FLOAT",
-        help=(
-            "adaptive omission floor for tiny windows: a window below "
-            "--isometric-short-window may accept a shorter text down to this word "
-            f"coverage (0.5-0.75; default {DEFAULT_ISOMETRIC_SHORT_COVERAGE:g}); "
-            "always recorded per unit"
-        ),
-    )
-    p.add_argument(
-        "--isometric-short-window",
-        type=float,
-        default=DEFAULT_ISOMETRIC_SHORT_WINDOW,
-        metavar="SECONDS",
-        help=(
-            "tiny-window threshold for the adaptive omission floor (strictly below "
-            f"this many seconds; 0-3; default {DEFAULT_ISOMETRIC_SHORT_WINDOW:g})"
-        ),
-    )
-    p.add_argument(
-        "--qc-final",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "final QC gate: aggregate transcript/translation/subtitle verdicts "
-            "and fresh output checks into a quality verdict (default: on; a "
-            "fail makes the run exit non-zero)"
-        ),
-    )
-    p.add_argument(
-        "--qc-tts",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "per-clip TTS QC: score every final fitted clip with NISQA-TTS, "
-            "retry low-MOS clips once with changed settings and write review "
-            "packets (default: on; needs the 'torchmetrics' dependency)"
-        ),
-    )
-    p.add_argument(
-        "--tts-qc-mos-min",
-        type=float,
-        default=3.0,
-        metavar="MOS",
-        help="per-clip TTS QC: retry/review clips below this NISQA MOS (default 3.0)",
-    )
-    p.add_argument(
-        "--mt-engine",
-        choices=list(MT_ENGINES),
-        default=DEFAULT_MT_ENGINE,
-        help=(
-            "machine-translation engine (default: envit5). 'ollama' runs the "
-            "contextual translate->reflect->improve loop on a local Ollama "
-            "model; every LLM output is gated by deterministic validators and "
-            "falls back to envit5 per failed segment. 'hunyuan' runs the "
-            "HY-MT1.5-7B translation specialist via a local Ollama server "
-            "(official GGUF, opt-in); envit5 stays the default and per-segment "
-            "fallback."
-        ),
-    )
-    p.add_argument(
-        "--ollama-model",
-        default=DEFAULT_OLLAMA_MODEL,
-        metavar="MODEL",
-        help=(
-            "Ollama model for --mt-engine ollama "
-            f"(default: {DEFAULT_OLLAMA_MODEL}; pull it with 'ollama pull "
-            f"{DEFAULT_OLLAMA_MODEL}')"
-        ),
-    )
-    p.add_argument(
-        "--ollama-host",
-        default=DEFAULT_OLLAMA_HOST,
-        metavar="URL",
-        help=f"Ollama server base URL (default: {DEFAULT_OLLAMA_HOST})",
-    )
-    p.add_argument(
-        "--hunyuan-model",
-        default=DEFAULT_HUNYUAN_MODEL,
-        metavar="MODEL",
-        help=(
-            "Hunyuan model for --mt-engine hunyuan "
-            f"(default: {DEFAULT_HUNYUAN_MODEL}; pull it with 'ollama run "
-            f"{DEFAULT_HUNYUAN_MODEL}')"
-        ),
-    )
-    p.add_argument(
-        "--hunyuan-host",
-        default=DEFAULT_HUNYUAN_HOST,
-        metavar="URL",
-        help=f"Hunyuan server base URL (default: {DEFAULT_HUNYUAN_HOST})",
-    )
-    p.add_argument(
-        "--hunyuan-refine",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help=(
-            "translation refine pass (M5-T2). ON by default for --mt-engine "
-            "hunyuan: after the QC battery, still-flagged units get ONE cycle "
-            "of Hunyuan candidate samples, accepted only when strictly better. "
-            "--no-hunyuan-refine restores the previous (no-refine) behaviour; "
-            "non-hunyuan engines never refine (default: auto)"
-        ),
-    )
-    p.add_argument(
-        "--hunyuan-refine-max-units",
-        type=int,
-        default=40,
-        metavar="N",
-        help=(
-            "cost guard for the refine pass: at most N still-flagged units are "
-            "refined per run, the rest are recorded as budget skips "
-            "(default: 40)"
-        ),
-    )
-    p.add_argument(
-        "--fusion-model",
-        default="",
-        metavar="MODEL",
-        help=(
-            "optional Hunyuan-MT-Chimera-7B GGUF model tag on the same Ollama "
-            "host, used to fuse --hunyuan-refine candidates (no-op when empty; "
-            "see the docs for the exact tag)"
-        ),
-    )
-    p.add_argument(
-        "--hunyuan-samples",
-        type=int,
-        default=3,
-        metavar="K",
-        help="Hunyuan candidates sampled per refined row (default: 3)",
-    )
-    p.add_argument(
-        "--tts-engine",
-        choices=list(TTS_ENGINES),
-        default="piper",
-        help=(
-            "TTS engine (default: piper). 'vixtts' needs --allow-nc-models "
-            "(CPML non-commercial weights)."
-        ),
-    )
-    p.add_argument(
-        "--allow-nc-models",
-        action="store_true",
-        help="allow non-commercial model weights (required for vixtts)",
-    )
-    p.add_argument(
-        "--allow-lang-mismatch",
-        action="store_true",
-        help=(
-            "skip the post-ASR language guard (allow a transcript that looks "
-            "like the wrong language, e.g. a vi-specialist model on English)"
-        ),
-    )
-    p.add_argument(
-        "--ref-voice",
-        default=None,
-        metavar="WAV",
-        help="reference voice for cloning (ViXTTS; default: shipped sample)",
-    )
-    p.add_argument(
-        "--diarize",
-        action="store_true",
-        help=(
-            "detect speakers with pyannote 3.1 and give each a voice "
-            "(needs HF_TOKEN + accepted gated models)"
-        ),
-    )
-    p.add_argument(
-        "--clone-speakers",
-        action="store_true",
-        help=(
-            "clone each diarized speaker's own voice from the separated vocals "
-            "(needs --diarize --tts-engine vixtts --allow-nc-models)"
-        ),
-    )
-    p.add_argument(
-        "--voice-map",
-        default=None,
-        metavar="JSON",
-        help='per-speaker voice map, e.g. \'{"spk1": "25hours"}\'',
-    )
-    p.add_argument(
-        "--glossary",
-        default=None,
-        metavar="PATH",
-        help=(
-            "TSV glossary of 'term<TAB>translation' rows applied to the MT "
-            "output after translation (see README 'Translation glossary')"
-        ),
-    )
-    p.add_argument(
-        "--pronounce",
-        default=None,
-        metavar="PATH",
-        help=(
-            "TSV pronunciation lexicon of 'written<TAB>spoken' rows applied to "
-            "the TTS text only; subtitles keep the written form (see README "
-            "'Pronunciation lexicon')"
-        ),
-    )
+
+
+def _add_spec_args(p: argparse.ArgumentParser, spec) -> None:
+    """Register one :class:`~vidub.options.OptionSpec` on an argparse parser."""
+    dest = spec.dest or spec.field
+    names = [spec.flag, *spec.aliases]
+    default = spec.default if spec.cli_default is OptionSpec._UNSET else spec.cli_default
+    if spec.cli_action == "opt":
+        p.add_argument(
+            *names,
+            dest=dest,
+            action=argparse.BooleanOptionalAction,
+            default=default,
+            help=spec.help,
+        )
+    elif spec.cli_action == "true":
+        p.add_argument(*names, dest=dest, action="store_true", help=spec.help)
+    elif spec.cli_action == "false":
+        p.add_argument(*names, dest=dest, action="store_false", default=True, help=spec.help)
+    else:
+        kwargs: dict[str, object] = {"default": default, "help": spec.help}
+        if spec.metavar:
+            kwargs["metavar"] = spec.metavar
+        if spec.cli_type is not None:
+            kwargs["type"] = spec.cli_type
+        elif spec.kind in ("float", "int"):
+            kwargs["type"] = float if spec.kind == "float" else int
+        if spec.choices and spec.cli_type is None:
+            kwargs["choices"] = list(spec.choices)
+        p.add_argument(*names, dest=dest, **kwargs)
+    for alias in spec.suppressed_aliases:
+        p.add_argument(
+            alias, dest=dest, action="store_false", help=argparse.SUPPRESS
+        )
+
+
+def _add_run_controls(p: argparse.ArgumentParser) -> None:
+    """Resume/force/burn: run controls, not ``JobConfig`` options."""
     p.add_argument(
         "--resume",
         action=argparse.BooleanOptionalAction,
@@ -863,137 +544,6 @@ def _add_shared_pipeline_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--burn", action="store_true", help="burn subtitles into the video"
-    )
-    p.add_argument(
-        "--sub-pos",
-        dest="sub_pos",
-        type=normalize_sub_position,
-        default=DEFAULT_SUB_POSITION,
-        metavar="POS",
-        help=(
-            "subtitle position for the .ass export and --burn: "
-            f"{'|'.join(SUB_POSITIONS)} (default {DEFAULT_SUB_POSITION})"
-        ),
-    )
-    p.add_argument(
-        "--sub-font-size",
-        dest="sub_font_size",
-        type=int,
-        default=DEFAULT_SUB_FONT_SIZE,
-        metavar="N",
-        help=(
-            "subtitle font size in points for the .ass export and --burn "
-            f"(default {DEFAULT_SUB_FONT_SIZE})"
-        ),
-    )
-    p.add_argument(
-        "--sub-margin-v",
-        dest="sub_margin_v",
-        type=int,
-        default=None,
-        metavar="N",
-        help=(
-            "subtitle vertical margin in pixels for the .ass export and --burn; "
-            "default is per position (bottom/top 24, center 0)"
-        ),
-    )
-    p.add_argument(
-        "--loudness-target",
-        type=float,
-        default=DEFAULT_LOUDNESS_I,
-        metavar="LUFS",
-        help=f"loudnorm integrated loudness target (default {DEFAULT_LOUDNESS_I:g})",
-    )
-    p.add_argument(
-        "--loudness-tp",
-        type=float,
-        default=DEFAULT_LOUDNESS_TP,
-        metavar="DBTP",
-        help=f"loudnorm true-peak target (default {DEFAULT_LOUDNESS_TP:g})",
-    )
-    p.add_argument(
-        "--loudness-lra",
-        type=float,
-        default=DEFAULT_LOUDNESS_LRA,
-        metavar="LU",
-        help=f"loudnorm loudness range (default {DEFAULT_LOUDNESS_LRA:g})",
-    )
-    p.add_argument(
-        "--speed-as-is",
-        type=float,
-        default=DEFAULT_SPEED_AS_IS,
-        metavar="R",
-        help=(
-            "timing: do not stretch a segment within this ratio of its window "
-            f"(default {DEFAULT_SPEED_AS_IS:g})"
-        ),
-    )
-    p.add_argument(
-        "--speed-cap",
-        type=float,
-        default=DEFAULT_SPEED_CAP,
-        metavar="R",
-        help=(
-            "timing: hardest atempo a segment may receive before it is "
-            f"re-translated (default {DEFAULT_SPEED_CAP:g})"
-        ),
-    )
-    p.add_argument(
-        "--no-retranslate",
-        dest="retranslate",
-        action="store_false",
-        default=True,
-        help=(
-            "timing: disable the shortening re-translation retry (over-long "
-            "segments are clipped instead)"
-        ),
-    )
-    p.add_argument(
-        "--tail-pad",
-        type=float,
-        default=DEFAULT_TAIL_PAD,
-        metavar="S",
-        help=(
-            "timing: extend the FINAL segment's window past the video end by "
-            f"this many seconds so it is never cut mid-word "
-            f"(default {DEFAULT_TAIL_PAD:g})"
-        ),
-    )
-    p.add_argument(
-        "--tts-rate-fit",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "timing: preserve natural Piper pace for fitting speech and "
-            "re-synthesize overflow faster (per-synthesis length_scale); "
-            "--no-tts-rate-fit restores the single fixed rate (default on)"
-        ),
-    )
-    p.add_argument(
-        "--recenter",
-        dest="recenter_audio",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "timing: shift a fitted clip later into its window's slack instead "
-            "of always starting at the segment start; --no-recenter disables it "
-            "(default on)"
-        ),
-    )
-    p.add_argument(
-        "--align-display",
-        dest="align_display",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "timing: force-align each multi-member unit's synthesized audio so "
-            "every member row gets a real, word-edge-snapped display span; "
-            "--no-align-display skips the alignment ASR and uses the split "
-            "fallback (default on)"
-        ),
-    )
-    p.add_argument(
-        "--cache-dir", default=None, help="cache root (default: .vidub-cache)"
     )
 
 
