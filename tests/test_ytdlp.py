@@ -60,6 +60,10 @@ def test_download_without_yt_dlp_is_actionable(
 
 
 def test_download_rejects_non_url(tmp_path: Path) -> None:
+    # download() checks the yt-dlp extra BEFORE the URL guard, so the
+    # ValueError ordering only exists when yt-dlp is installed (CI installs
+    # only [dev]; there the actionable YtDlpError fires instead).
+    pytest.importorskip("yt_dlp", reason="the youtube extra is not installed")
     with pytest.raises(ValueError):
         ytdlp.download("samples/demo_en.mp4", tmp_path)
 
