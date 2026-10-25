@@ -29,6 +29,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install ffmpeg (the timing tests exercise real ffmpeg)
+        shell: bash
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+          else
+            choco install ffmpeg -y --no-progress
+            echo "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin" >> "$GITHUB_PATH"
+          fi
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}

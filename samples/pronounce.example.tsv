@@ -1,0 +1,10 @@
+# ViDub pronunciation lexicon example: one 'written<TAB>spoken' row per line.
+# Applied to the TTS text only; subtitles keep the written form; extend per video.
+# Use it for acronyms and brand names the engine reads wrong (VRAM letter-by-letter,
+# ChatGPT spelled out, ...). Blank lines and '#' comments are ignored.
+# Longer written forms win over shorter prefixes (e.g. 'ChatGPT' before 'GPT').
+VRAM	Vê-ram
+GPU	Gờ-Pê-U
+ChatGPT	Chét-Gê-Pê-Tê
+CPU	Xê-Pê-U
+LLM	Lờ-Lờ-M

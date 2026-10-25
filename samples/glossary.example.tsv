@@ -1,0 +1,18 @@
+# ViDub glossary example: one 'term<TAB>translation' row per line.
+# Extend this file per video — add the terms your video uses that the MT
+# model tends to phrase differently. Blank lines and '#' comments are ignored.
+# Terms are enforced two ways: an output-side replace and a source-side splice.
+# Longer terms win over shorter prefixes (e.g. 'large language model' before 'model').
+AI assistant	trợ lý AI
+large language model	mô hình ngôn ngữ lớn
+neural network	mạng nơ-ron
+parameters	tham số
+training data	dữ liệu huấn luyện
+supercomputer	siêu máy tính
+probability	xác suất
+GPU	GPU
+VRAM	VRAM
+graphics card	card màn hình
+peasants	anh em cấu hình thấp
+peasant	anh em cấu hình thấp
+Riddle me this	Đố anh em biết

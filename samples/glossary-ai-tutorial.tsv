@@ -1,0 +1,19 @@
+# Opt-in terminology for AI/programming tutorials; not general-purpose translation.
+# In this domain, code means source code and transformer means the neural architecture.
+generative pre-trained transformer	Transformer sinh nội dung được tiền huấn luyện
+large language model	mô hình ngôn ngữ lớn
+foundation model	mô hình nền tảng
+feed-forward neural network	mạng nơ-ron truyền thẳng
+feedforward	truyền thẳng
+pre-training	tiền huấn luyện	aliases=đào tạo trước|tiền đào tạo
+fine-tuning	tinh chỉnh
+in parallel	song song
+parallelized	xử lý song song	aliases=song hóa
+transformer	Transformer	aliases=máy biến áp
+AI assistant	trợ lý AI
+GPT	GPT
+LLM	LLM
+code	mã nguồn	aliases=mật mã
+# Reference wording for explicitly reviewed source sentences in these tutorials.
+They soak it all in at once in parallel.	Chúng tiếp nhận toàn bộ cùng lúc theo cách song song.
+Sometimes I actually prefer the content that I make as a casual talk rather than a produced video, but I'll leave it up to you which one of these feels like the better follow on.	Đôi khi tôi thích nội dung mình trình bày trong một buổi trò chuyện thoải mái hơn là trong một video được dàn dựng, nhưng tôi sẽ để bạn quyết định hình thức nào phù hợp hơn để xem tiếp.
