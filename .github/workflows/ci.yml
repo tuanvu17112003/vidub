@@ -38,8 +38,14 @@ jobs:
           python -m pytest -m "not slow" -q --tb=line 2>&1 | tee pytest.log
       - name: Publish failure summary
         if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
-        run: tail -60 pytest.log >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          tail -60 pytest.log >> "$GITHUB_STEP_SUMMARY"
+          gh issue create --repo "${{ github.repository }}" \
+            --title "CI failure ${{ github.sha }} (${{ matrix.os }})" \
+            --body "$(tail -60 pytest.log)" || true
   build:
     # CD stage: every tag build publishes installable wheels as workflow
     # artifacts. Publishing to a package index is deliberately NOT wired (no
