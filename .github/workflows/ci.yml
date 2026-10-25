@@ -7,6 +7,10 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  issues: write
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
