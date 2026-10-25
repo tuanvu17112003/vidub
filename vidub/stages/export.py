@@ -607,7 +607,12 @@ def write_subtitles_srt(script: list[dict], path: str | Path) -> Path:
                 text=str(record.get("vi", "")),
             )
         )
-    subs.save(str(target), format="srt")
+    # SRT convention (and the byte-identical export golden) is CRLF line
+    # endings; pysubs2's save() is platform-dependent (text mode follows
+    # os.linesep), so write normalized bytes ourselves to keep the artifact
+    # identical on every OS.
+    text = subs.to_string("srt").replace("\r\n", "\n").replace("\n", "\r\n")
+    target.write_bytes(text.encode("utf-8"))
     return target
 
 
