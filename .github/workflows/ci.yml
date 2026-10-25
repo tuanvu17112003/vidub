@@ -31,7 +31,15 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       # Optional-dependency tests must keep skipping cleanly offline (no
       # network in CI); none may require a download to pass.
-      - run: python -m pytest -m "not slow" -q
+      - name: Test
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -m "not slow" -q --tb=line 2>&1 | tee pytest.log
+      - name: Publish failure summary
+        if: failure()
+        shell: bash
+        run: tail -60 pytest.log >> "$GITHUB_STEP_SUMMARY"
   build:
     # CD stage: every tag build publishes installable wheels as workflow
     # artifacts. Publishing to a package index is deliberately NOT wired (no
